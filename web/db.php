@@ -151,6 +151,11 @@ function bible_verses(string $osis_code, int $chapter): array {
 
 // Look up edition.id from a code like 'NA28' (or null). Cached.
 function bible_edition_id(?string $code): ?int {
+    if (should_use_remote_api()) {
+        // Not needed in remote mode for most paths
+        return null;
+    }
+
     static $cache = null;
     if ($code === null || $code === '') return null;
     if ($cache === null) {
@@ -165,6 +170,15 @@ function bible_edition_id(?string $code): ?int {
 // LXX-Rahlfs is a *mode switch* — selecting it routes lookups to the LXX
 // tables (book_lxx / verse_lxx / word_lxx) via the lxx_* helpers below.
 function bible_greek_editions(): array {
+    if (should_use_remote_api()) {
+        // Static list for remote mode (avoids local DB)
+        return [
+            ['id' => 1, 'code' => 'NA28',        'name' => 'Nestle-Aland 28th'],
+            ['id' => 2, 'code' => 'TR',          'name' => 'Textus Receptus'],
+            ['id' => 3, 'code' => 'LXX-Rahlfs',  'name' => 'Rahlfs LXX 1935'],
+        ];
+    }
+
     $stmt = bible_pdo()->query(
         "SELECT id, code, name FROM edition
           WHERE code IN ('NA28','TR','LXX-Rahlfs')
@@ -176,6 +190,11 @@ function bible_greek_editions(): array {
 // Look up a Strong's entry by canonical lookup key (e.g. 'H430', 'G851').
 // Returns ['number','lemma','xlit','pronounce','description'] or null on miss.
 function bible_strongs_lookup(string $code): ?array {
+    if (should_use_remote_api()) {
+        // Strong's lookups are handled client-side via the remote API in remote mode
+        return null;
+    }
+
     static $cache = [];
     if ($code === '' || !preg_match('/^[HG]\d+[A-Za-z]?$/', $code)) return null;
     if (array_key_exists($code, $cache)) return $cache[$code];
@@ -503,6 +522,11 @@ function kjv_verse_text(int $book_id, int $chapter, int $verse): ?string {
 // Return the global Verse_Order (1..31102) for a given verse, or null if not
 // found in bible_kjv (verse=0 psalm titles have no KJV row).
 function kjv_verse_order(int $book_id, int $chapter, int $verse): ?int {
+    // In remote API mode we don't have the bible_kjv table locally.
+    if (should_use_remote_api()) {
+        return null;
+    }
+
     static $cache = [];
     $key = "$book_id.$chapter.$verse";
     if (array_key_exists($key, $cache)) return $cache[$key];
