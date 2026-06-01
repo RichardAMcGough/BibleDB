@@ -58,6 +58,23 @@ Then open <http://localhost:8080> in your browser.
 
 **IIS**: configure a virtual directory pointing at this folder.
 
+## Running standalone (recommended for development)
+
+The web UI can now run completely independently of the biblewheel.com site layout.
+
+Just serve the `web/` folder directly:
+
+```cmd
+cd web
+php -S localhost:8080
+```
+
+Then open http://localhost:8080
+
+When the external `bwHeader.inc` / `bwBanner.php` files are not found, the UI automatically falls back to minimal local header and banner files (`local_header.inc.php` and `local_banner.inc.php`).
+
+This makes it easy to develop the UI in isolation (especially when using remote API mode).
+
 ## Remote development (for external contributors)
 
 You can develop and test the web UI without having the full local MariaDB database or running the Python import pipeline.

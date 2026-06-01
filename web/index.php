@@ -202,7 +202,17 @@ $next = $lxx_mode
     ? lxx_neighbor($book_code, $chapter, $last_verse_num, $subverse, 'next')
     : bible_neighbor($book_code, $chapter, $last_verse_num, 'next');
 
-?><?php require('../include/bwHeader.inc'); ?>
+<?php
+// Standalone / development mode detection.
+// If the external biblewheel.com includes don't exist, use local minimal versions.
+$use_local_layout = !file_exists(__DIR__ . '/../include/bwHeader.inc');
+
+if ($use_local_layout) {
+    require __DIR__ . '/local_header.inc.php';
+} else {
+    require('../include/bwHeader.inc');
+}
+?>
 
 <html>
 <head>
@@ -210,11 +220,24 @@ $next = $lxx_mode
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="author" content="Richard Amiel McGough">
 <title>Bible Browser — <?= h($book_code) ?> <?= (int)$chapter ?>:<?= (int)$verse ?><?= $actual_count > 1 ? '-' . (int)$last_verse_num : '' ?></title>
-<link href="/include/bw.css?v=<?= filemtime($_SERVER['DOCUMENT_ROOT'].'/include/bw.css') ?>" rel=stylesheet type='text/css'>
-<link rel="stylesheet" href="/bible/style.css?v=<?= filemtime($_SERVER['DOCUMENT_ROOT'].'/bible/style.css') ?>"><?php // cache-busted by file mtime ?>
+
+<?php if ($use_local_layout): ?>
+  <!-- Local development styles -->
+  <link rel="stylesheet" href="style.css">
+<?php else: ?>
+  <link href="/include/bw.css?v=<?= filemtime($_SERVER['DOCUMENT_ROOT'].'/include/bw.css') ?>" rel=stylesheet type='text/css'>
+  <link rel="stylesheet" href="/bible/style.css?v=<?= filemtime($_SERVER['DOCUMENT_ROOT'].'/bible/style.css') ?>"><?php // cache-busted by file mtime ?>
+<?php endif; ?>
 </head>
 <body>
-<?php require('../include/bwBanner.php'); ?>
+
+<?php
+if ($use_local_layout) {
+    require __DIR__ . '/local_banner.inc.php';
+} else {
+    require('../include/bwBanner.php');
+}
+?>
 <div class="bible-layout">
 <main class="bible-main">
 <div class="selector">
