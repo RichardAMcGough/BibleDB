@@ -4,6 +4,11 @@ A drop-in PHP page that displays a full interlinear view of any verse in
 the `stepbible` database. No frameworks, no dependencies beyond PHP and
 the PDO MySQL driver.
 
+> **External contributors:** The web UI is ready for development even if you
+> don’t have a local copy of the full database. Enable remote API mode in
+> `config.php` to work against a live instance while the import pipeline
+> is still being stabilized. See the “Remote development” section below.
+
 ## Files
 
 | File                | Purpose                                                |
@@ -51,6 +56,20 @@ Then open <http://localhost:8080> in your browser.
 (or symlink it), then open `http://localhost/web/`.
 
 **IIS**: configure a virtual directory pointing at this folder.
+
+## Remote development (for external contributors)
+
+You can develop and test the web UI without having the full local MariaDB database or running the Python import pipeline.
+
+1. Copy `config.php.sample` → `config.php`
+2. Edit `config.php` and set:
+   ```php
+   'use_remote_api' => true,
+   'remote_api_base' => 'https://your-live-instance.example.com/bible',
+   ```
+3. The UI will now fetch data from the remote instance instead of your local database.
+
+This is the recommended way for contributors to start working on the frontend while the data import side is still being stabilized.
 
 ## Using the page
 
