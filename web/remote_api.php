@@ -124,3 +124,41 @@ function remote_lxx_neighbor(string $lxx_osis_code, int $chapter, int $verse, st
         'direction' => $direction,
     ]);
 }
+
+// Search helpers. These are thin wrappers over remote_api_call; the
+// callers in db.php / search_lib.php can also call remote_api_call
+// directly. Both styles coexist in this file.
+
+function remote_bible_strongs_lookup(string $code): ?array {
+    return remote_api_call('strongs', ['code' => $code]);
+}
+
+function remote_bible_kjv_verse_clean(string $osis_code, int $chapter, int $verse): ?array {
+    return remote_api_call('kjv_verse', [
+        'book'    => $osis_code,
+        'chapter' => $chapter,
+        'verse'   => $verse,
+    ]);
+}
+
+function remote_bible_search_gematria(int $value): ?array {
+    return remote_api_call('search_gematria', ['value' => $value]);
+}
+
+function remote_bible_search_verses(string $mode, string $q_raw, string $lang = ''): ?array {
+    return remote_api_call('search_verses', [
+        'mode' => $mode,
+        'q'    => $q_raw,
+        'lang' => $lang,
+    ]);
+}
+
+function remote_els_fetch(string $book, int $chapter, int $verse, string $edition, int $letters): ?array {
+    return remote_api_call('els_fetch', [
+        'book'    => $book,
+        'chapter' => $chapter,
+        'verse'   => $verse,
+        'edition' => $edition,
+        'letters' => $letters,
+    ]);
+}

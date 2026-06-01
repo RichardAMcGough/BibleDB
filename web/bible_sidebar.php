@@ -10,13 +10,13 @@ function _bsActive(string $file): string {
   <div class="bible-sidebar-inner">
     <p class="bible-sidebar-title">Bible DB</p>
     <nav class="bible-sidebar-nav">
-      <a href="/bible/index.php"<?= _bsActive('index.php') ?>>Bible Viewer</a>
+      <a href="index.php"<?= _bsActive('index.php') ?>>Bible Viewer</a>
       <?php if ($_bsCurrentPage === 'search.php'): ?>
-      <a href="/bible/search.php" class="active">Search Results</a>
+      <a href="search.php" class="active">Search Results</a>
       <?php endif; ?>
-      <a href="/bible/els.php"<?= _bsActive('els.php') ?>>ELS Grid</a>
-      <a href="/bible/numbers.php"<?= _bsActive('numbers.php') ?>>Number Sequences</a>
-      <a href="/bible/stats.php"<?= _bsActive('stats.php') ?>>Stats</a>
+      <a href="els.php"<?= _bsActive('els.php') ?>>ELS Grid</a>
+      <a href="numbers.php"<?= _bsActive('numbers.php') ?>>Number Sequences</a>
+      <a href="stats.php"<?= _bsActive('stats.php') ?>>Stats</a>
     </nav>
   </div>
 </aside>

@@ -89,21 +89,6 @@ function should_use_remote_api(): bool {
     return $use_remote;
 }
 
-/**
- * Returns the base URL for API calls (local or remote).
- * Used by client-side JS when in remote mode.
- */
-function get_api_base(): string {
-    if (should_use_remote_api()) {
-        $cfg_path = __DIR__ . '/config.php';
-        if (file_exists($cfg_path)) {
-            $cfg = require $cfg_path;
-            return rtrim($cfg['remote_api_base'] ?? '', '/');
-        }
-    }
-    return '';
-}
-
 // ===================================================================
 // MT / NT query helpers (existing 11-table v2 schema)
 // ===================================================================
@@ -190,14 +175,15 @@ function bible_greek_editions(): array {
 // Look up a Strong's entry by canonical lookup key (e.g. 'H430', 'G851').
 // Returns ['number','lemma','xlit','pronounce','description'] or null on miss.
 function bible_strongs_lookup(string $code): ?array {
-    if (should_use_remote_api()) {
-        // Strong's lookups are handled client-side via the remote API in remote mode
-        return null;
-    }
-
     static $cache = [];
     if ($code === '' || !preg_match('/^[HG]\d+[A-Za-z]?$/', $code)) return null;
     if (array_key_exists($code, $cache)) return $cache[$code];
+
+    if (should_use_remote_api()) {
+        $row = remote_api_call('strongs', ['code' => $code]);
+        return $cache[$code] = (is_array($row) && !empty($row) ? $row : null);
+    }
+
     $stmt = bible_pdo()->prepare(
         "SELECT number, lemma, xlit, pronounce, description
            FROM strongs WHERE number = ? LIMIT 1"
@@ -205,6 +191,38 @@ function bible_strongs_lookup(string $code): ?array {
     $stmt->execute([$code]);
     $row = $stmt->fetch();
     return $cache[$code] = ($row ?: null);
+}
+
+// Look up the clean (tag-stripped) KJV text for one verse. Used by the
+// verse-tooltip API in search.php. Returns null on miss or in remote mode
+// where the remote API serves the same endpoint.
+function bible_kjv_verse_clean(string $osis_code, int $chapter, int $verse): ?string {
+    static $cache = [];
+    $key = "$osis_code.$chapter.$verse";
+    if (array_key_exists($key, $cache)) return $cache[$key];
+
+    if (should_use_remote_api()) {
+        $resp = remote_api_call('kjv_verse', [
+            'book'    => $osis_code,
+            'chapter' => $chapter,
+            'verse'   => $verse,
+        ]);
+        $text = is_array($resp) ? ($resp['text'] ?? null) : null;
+        return $cache[$key] = (is_string($text) ? $text : null);
+    }
+
+    try {
+        $stmt = bible_pdo()->prepare(
+            'SELECT Verse_Text_Clean FROM bible_kjv
+              WHERE Book = (SELECT id FROM book WHERE osis_code = ? LIMIT 1)
+                AND Chapter = ? AND Verse = ? LIMIT 1'
+        );
+        $stmt->execute([$osis_code, $chapter, $verse]);
+        $row = $stmt->fetch();
+        return $cache[$key] = ($row ? (string)$row['Verse_Text_Clean'] : null);
+    } catch (Throwable $e) {
+        return $cache[$key] = null;
+    }
 }
 
 // Resolve a (book_osis, chapter, verse) into the verse row plus all

@@ -803,3 +803,104 @@ Three formats coexist:
 - **Display / href key**: prefix + `strongs_display()` = digits stripped of leading zeros, then re-prefixed: `H0430`. Used in user-visible text and `?q=` param.
 - **Canonical DB lookup key**: `strongs_full_code()` strips braces and leading zeros: `H430`. Used for `data-strongs` attribute and the `strongs` table lookup.
 - **LIKE search**: the strongs-mode query uses `LIKE '%H0430%'` (4-digit padded) to match inside `{H0430G}`. `str_pad` in `search.php` normalizes any input to 4 digits before the query.
+
+### 2026-06-01 (session 6) — search.php works in remote API mode + project moved folders
+
+The project moved from `C:\Work\Resurrected\Claude\BibleDB\Bible Database` to `C:\Work\Resurrected\Bible Wheel Site\BibleDB`. The new layout has `scripts/import/`, `scripts/maintenance/`, `sql/schema/`, `data/raw/`, `data/processed/`, `docs/` (handoffs moved here), and `web/` (unchanged). The path-map references in earlier sessions still hold semantically but the folder names changed.
+
+Up to this point, `search.php` short-circuited with a "Search functionality is currently disabled when using remote API mode" message in remote mode. This session makes search (and every other UI feature) work over remote API.
+
+#### Architecture — local PHP proxy, not direct JS-to-remote
+
+The clean pattern, now applied uniformly:
+
+1. Browser JS always fetches **local PHP** (`localhost/bible/api.php?...`). Never the remote site directly.
+2. Local PHP helpers (`bible_search_*`, `bible_strongs_lookup`, `bible_kjv_verse_clean`) check `should_use_remote_api()`. In remote mode they call `remote_api_call($endpoint, $params)` which `file_get_contents()`s the live `api.php`. In local mode they run the original SQL.
+3. The live `api.php` exposes the same set of `?api=*` endpoints, runs them locally against its own DB, and returns JSON.
+
+Why this matters: an earlier design had JS fetching the *remote URL directly* via `window.BIBLE_API_BASE = '<remote URL>'`. This breaks on cross-origin fetches (CORS error from `strongs-tooltip.js`, `dropdowns.js`, viewcount). The local-proxy pattern sidesteps CORS and reuses the dispatch logic that already exists in `db.php`.
+
+#### Files added / changed
+
+**New file: `web/search_lib.php`** — Two helpers extracted from `search.php`:
+- `bible_search_gematria(int $value): array` — calls the `GetGematriaWords` stored proc, groups by `text_search`, dedupes (book,ch,v), caps at 6000 occurrences. Returns `['groups', 'truncated', 'form_count', 'total_occ']`. In remote mode, delegates to `remote_api_call('search_gematria', ['value' => $value])`.
+- `bible_search_verses(string $mode, string $q_raw, string $lang): array` — handles Strong's / text / phrase / English-KJV-phrase modes. Returns `['rows', 'truncated', 'not_found', 'norms', 'error'?]`. In remote mode, delegates to `remote_api_call('search_verses', ...)`.
+
+Both helpers hold the formerly-private `search_escape_like()` and `search_normalize_query()` (renamed from `escape_like` / `normalize_query` to avoid name collisions).
+
+**`web/db.php`** —
+- `bible_strongs_lookup($code)` now actually calls `remote_api_call('strongs', ['code' => $code])` in remote mode. Previously it returned `null` unconditionally, which silently broke all Strong's tooltips and the search.php Strong's-validation step.
+- New `bible_kjv_verse_clean($osis, $ch, $v): ?string` returns the tag-stripped KJV text for one verse, with remote delegation. Used by the `verse-tooltip.js` API path.
+- `get_api_base()` rewritten to always return `''`. **This is the CORS fix.** Previously it returned the live URL in remote mode, which `index.php` then emitted into `window.BIBLE_API_BASE` — causing every `${base}/api.php` fetch (strongs tooltip, dropdowns, viewcount) to go cross-origin and 403/CORS-fail. Now JS always falls back to `/bible` (relative) and hits the local PHP proxy.
+
+**`web/api.php`** — Three new endpoints:
+- `?api=kjv_verse&book=X&chapter=N&verse=N` → `{"text": "..."}` (or `{"text": null}`).
+- `?api=search_gematria&value=N` → `{"groups": [...], "truncated": bool, "form_count": int, "total_occ": int}`.
+- `?api=search_verses&mode=...&q=...&lang=...` → `{"rows": [...], "truncated": bool, "not_found": bool, "norms": [...]}`.
+Also: `require` → `require_once` for `db.php`, `book_aliases.php`, `search_lib.php`, and `search.php` does the same for `db.php`, `helpers.php`, `search_lib.php`. Reason: on Windows with mixed `\` and `/` path separators from `__DIR__`, plain `require` of `db.php` from one file plus `require_once` from another file occasionally fails to dedupe, triggering "Cannot redeclare function `bible_pdo`" fatals in remote mode.
+
+**`web/remote_api.php`** — Four wrapper functions for the new endpoints: `remote_bible_strongs_lookup()`, `remote_bible_kjv_verse_clean()`, `remote_bible_search_gematria()`, `remote_bible_search_verses()`. The dispatching code in `db.php` / `search_lib.php` calls `remote_api_call(...)` directly rather than going through these wrappers; both styles coexist. The wrappers exist for consistency with the older `remote_bible_*` set.
+
+**`web/search.php`** — Removed the early-exit `"Search functionality is currently disabled..."` block (lines 13–17 of the prior version). Replaced the gematria stored-proc + grouping block (~60 lines) with one call to `bible_search_gematria()`. Replaced the verse-search SQL builder + execution block (~170 lines) with one call to `bible_search_verses()`. The `?api=kjv_verse` handler at the top of the file now uses `bible_kjv_verse_clean()` instead of querying `bible_pdo()` directly. All HTML rendering is unchanged — the helper return shapes are designed to feed the existing renderer.
+
+#### Deployment for remote API mode
+
+For remote mode to work on a local box, **both** the local and the remote (live) site need the new PHP files. The minimum live upload is `web/search_lib.php`, `web/api.php`, `web/db.php`. The live's `config.php` keeps `use_remote_api => false`; only the developer's local config sets `use_remote_api => true`.
+
+#### Gotchas / debugging tips for next time
+
+- **CORS error from `strongs-tooltip.js` or similar**: check `web/db.php` → `get_api_base()`. It must return `''` (or anything same-origin). If it returns the remote URL, JS will cross-origin-fetch and fail. We tried that design and walked away from it.
+- **"Cannot redeclare function `bible_pdo`"**: a file in the include chain is using plain `require` instead of `require_once`. Convert it. Affects api.php, search.php, els.php, index.php, stats.php — only api.php and search.php were converted this session; the rest haven't manifested the bug yet but probably should be converted too for safety.
+- **Search returns empty rows in remote mode but no errors**: the remote `api.php` doesn't have the new endpoints yet. Upload `web/search_lib.php` + `web/api.php` to the live site.
+- **Live api.php returns `{"error": "unknown api"}`** for `search_gematria` etc.: same — old api.php is still deployed live.
+- **Sanity URLs for the proxy chain** (replace `H430` / `value=37` as needed):
+  - `https://biblewheel.com/bible/api.php?api=strongs&code=H430` — live should return the row directly.
+  - `http://localhost/bible/api.php?api=strongs&code=H430` — local in remote mode should return the same row, proxied through.
+
+#### Schema / DB note — partial-schema recovery
+
+While bringing up the new folder, the local `stepbible` DB was found to be missing six tables: `word_edition`, `word_alt_strong`, `word_morpheme`, `word_link`, `variant`, `variant_edition`. These are exactly the first six `DROP TABLE IF EXISTS` lines in `sql/schema/schema.sql`, suggesting an aborted `--create-schema` run had dropped them without re-CREATEing. The live `biblewhe_stepbible` still had them. Recovery path that worked: `mysqldump` just those six tables from the live DB, then `Get-Content tables.sql | mysql -u root -p stepbible` locally (PowerShell doesn't support `<` redirection; use `Get-Content | mysql` or `cmd /c "mysql ... < file.sql"`).
+
+A full rebuild via `import_bible.py --create-schema --with-gematria` would also work but would drop `bible_kjv`, `bible_na27`, `bible_scr`, `greek`, `hebrew`, `p_variants_import`, `verse_views` — none of which have re-importers in `scripts/import/`. Those were originally imported by tools outside the current repo. If you ever do a full rebuild, you'll need to re-source those tables from elsewhere (or, again, mysqldump them off the live first).
+
+#### Follow-up — els.php proxy + stats.php friendly disable
+
+After the initial session-6 work, two secondary pages still hit `bible_pdo()` directly and would 500 in remote mode. Both now handled:
+
+**`web/els.php` — full remote proxy** (matches the pattern used for search):
+- Extracted `els_strip()` and `els_fetch()` into new `web/els_lib.php`. `els_letter_value()` stays in `els.php` (used only locally by the in-page gematria display).
+- `els_fetch()` checks `should_use_remote_api()` and delegates to `remote_api_call('els_fetch', [...])` in remote mode.
+- Added `?api=els_fetch&book=...&chapter=...&verse=...&edition=...&letters=...` endpoint to `api.php`, plus a `remote_els_fetch()` wrapper in `remote_api.php` for symmetry with the rest of the remote_* helpers.
+- `els.php` now `require_once`s the four core libs (db, book_aliases, helpers, els_lib).
+
+**`web/stats.php` — friendly disable**:
+- Added an early `should_use_remote_api()` guard. Renders a minimal page saying view counts are private per-instance and exits before any DB call.
+- This matches the existing `?api=viewcount` privacy policy (returns 0/0 in remote mode).
+- Also switched the requires to `require_once` for consistency.
+
+For remote-mode users, the upload set is now `api.php`, `db.php`, `search_lib.php`, `els_lib.php` (any time those change on local). `stats.php` is local-only — the friendly-disable path is hit only by the developer's machine. `remote_api.php` is also only used by remote-mode local sites, but uploading it doesn't hurt.
+
+#### Follow-up — make every URL work at any deploy path (`/bible/` *or* root)
+
+The web UI used to assume Apache/IIS was serving it under `/bible/`. Hard-coded `/bible/...` URLs in the sidebar, stylesheet links, and JS fetches all broke under `php -S localhost:8080` (which serves the `web/` folder at the origin root). Fix: relativise everything, centralise layout decisions in helpers.
+
+**New helpers in `web/helpers.php`** (single source of truth for the standalone-vs-biblewheel layout split):
+
+- `bible_is_local_layout(): bool` — cached `file_exists()` check for `../include/bwHeader.inc`. True when the external biblewheel.com includes aren't present.
+- `bible_render_layout_header(): void` — call before `<html>`. Emits either `local_header.inc.php` (standalone) or `bwHeader.inc` (production).
+- `bible_render_layout_banner(): void` — call as first thing inside `<body>`. Same logic, swaps `local_banner.inc.php` ↔ `bwBanner.php`.
+- `bible_render_layout_styles(): void` — call inside `<head>`. In production, emits the absolute `/include/bw.css` link (biblewheel-shared) plus the local stylesheet. In standalone, emits only the local stylesheet. The local stylesheet href is always relative (`style.css?v=<mtime>`) so it works at any path.
+
+**Pages refactored to use the helpers** (replacing 6–8 lines of inline `$use_local_layout` conditional + hard-coded `<link>` tags per page): `index.php`, `search.php` (both layout blocks — gematria and main results), `els.php`, `stats.php` (both — remote-disabled page and main page), `numbers.php` (also gained `require_once helpers.php`, which it was missing).
+
+**`bible_sidebar.php`** — sidebar `<a href="/bible/x.php">` links → relative `<a href="x.php">`. Works because the sidebar is included from sibling pages, so relative resolves correctly at any deploy path.
+
+**JS fetches** — `strongs-tooltip.js`, `dropdowns.js`, and the inline viewcount refresh in `index.php` now use relative `api.php?...` URLs (was `${base}/api.php`). The `window.BIBLE_API_BASE` JS global and the PHP `get_api_base()` function it sourced from are both removed — they were dead code after the CORS-era pivot.
+
+**Result**: the site now works under all four deploy modes with zero configuration:
+- Apache/IIS at `/bible/` — production layout (biblewheel includes), `/bible/style.css`-style cache busting.
+- Apache/IIS at root — production layout, root-relative URLs.
+- `php -S localhost:8080 -t web/` — standalone layout (local includes), root-relative URLs.
+- `php -S localhost:8080` with `mklink /J bible web` from one level up — production-style `/bible/...` URLs, standalone or production layout depending on whether the biblewheel includes are found.
+
+**Best-practices outcome**: the `$use_local_layout` boolean and the hard-coded `/bible/...` patterns are gone. Adding a new top-level page now means three helper calls instead of three nested conditionals plus stylesheet boilerplate.

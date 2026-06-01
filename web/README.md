@@ -89,6 +89,12 @@ You can develop and test the web UI without having the full local MariaDB databa
 
 This is the recommended way for contributors to start working on the frontend while the data import side is still being stabilized.
 
+**All features work in remote API mode**, including verse rendering, Strong's tooltips, KJV verse preview tooltips, grammar tooltips, gematria search, Strong's concordance, Hebrew / Greek / English text and phrase search, and the ELS (Equidistant Letter Sequence) grid. The architecture: client-side JS always fetches the *local* `api.php` on the same origin; the local PHP layer transparently proxies to the remote `api.php` via `remote_api_call()` when `use_remote_api` is true. No CORS configuration is needed and no client-side code needs to know whether it's running locally or remotely.
+
+The one exception is page view stats (`stats.php`), which is intentionally disabled in remote mode — view counts are per-instance private data, mirroring the existing privacy policy on the `?api=viewcount` endpoint.
+
+For this to work, the remote (live) site must be running the same code as your local checkout, since it has to expose the same `?api=*` endpoints. If you maintain the live site, deploy `web/api.php`, `web/db.php`, `web/search_lib.php`, `web/els_lib.php`, and `web/remote_api.php` whenever those change.
+
 ## Using the page
 
 Two ways to navigate to a verse:

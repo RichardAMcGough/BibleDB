@@ -98,8 +98,8 @@
     selChapter.addEventListener('change', async function () {
         const book    = selBook.value;
         const chapter = this.value;
-        const base = window.BIBLE_API_BASE || '/bible';
-        const verses  = await fetch(`${base}/api.php?api=verses&book=${encodeURIComponent(book)}&chapter=${chapter}`)
+        // Relative URL — works whether the page is served at /bible/ or root.
+        const verses  = await fetch(`api.php?api=verses&book=${encodeURIComponent(book)}&chapter=${chapter}`)
             .then(r => r.json()).catch(() => []);
         populate(selVerse, verses, null);
         populateCount(verses.length || 1);

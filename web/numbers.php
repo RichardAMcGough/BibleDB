@@ -1,12 +1,14 @@
-<?php require('../include/bwHeader.inc'); ?>
+<?php
+require_once __DIR__ . '/helpers.php';
+bible_render_layout_header();
+?>
 
 <html><head>
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="author" content="Richard Amiel McGough">
 <title>Number Sequences — Bible Wheel</title>
-<link href="/include/bw.css?v=<?= filemtime($_SERVER['DOCUMENT_ROOT'].'/include/bw.css') ?>" rel=stylesheet type='text/css'>
-<link rel="stylesheet" href="/bible/style.css?v=<?= filemtime($_SERVER['DOCUMENT_ROOT'].'/bible/style.css') ?>">
+<?php bible_render_layout_styles(); ?>
 <style>
   main h1 { font-size: 1.4rem; margin-bottom: 4px; }
   .num-controls {
@@ -46,7 +48,7 @@
 </style>
 </head>
 <body>
-<?php require('../include/bwBanner.php'); ?>
+<?php bible_render_layout_banner(); ?>
 <div class="bible-layout">
 <main class="bible-main">
 

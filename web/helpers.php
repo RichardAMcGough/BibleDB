@@ -56,6 +56,59 @@ function strongs_full_code(?string $strongs, string $language): string {
 require_once __DIR__ . '/hebrew_grammar.php';
 
 // ----------------------------------------------------------------------
+// Page layout helpers.
+// ----------------------------------------------------------------------
+// The web UI is normally embedded inside biblewheel.com's external
+// header/banner includes. When those files aren't present (standalone
+// dev mode, e.g. `php -S localhost:8080` from the web/ directory), we
+// fall back to minimal local_header.inc.php / local_banner.inc.php.
+//
+// These helpers centralise the file_exists() check so every page calls
+// the same code path. Pages should:
+//   bible_render_layout_header();   // before <html>
+//   bible_render_layout_styles();   // inside <head>
+//   bible_render_layout_banner();   // first thing inside <body>
+
+function bible_is_local_layout(): bool {
+    static $cache = null;
+    if ($cache !== null) return $cache;
+    return $cache = !file_exists(__DIR__ . '/../include/bwHeader.inc');
+}
+
+function bible_render_layout_header(): void {
+    if (bible_is_local_layout()) {
+        require __DIR__ . '/local_header.inc.php';
+    } else {
+        require __DIR__ . '/../include/bwHeader.inc';
+    }
+}
+
+function bible_render_layout_banner(): void {
+    if (bible_is_local_layout()) {
+        require __DIR__ . '/local_banner.inc.php';
+    } else {
+        require __DIR__ . '/../include/bwBanner.php';
+    }
+}
+
+// Emit the page's stylesheet <link> tags. Hrefs are RELATIVE so the page
+// renders correctly whether served at /bible/ (Apache/IIS) or at the
+// origin root (php -S localhost:8080). Cache-busted by file mtime.
+function bible_render_layout_styles(): void {
+    if (!bible_is_local_layout()) {
+        // Production: also pull biblewheel.com's shared bw.css.
+        $bw = $_SERVER['DOCUMENT_ROOT'] . '/include/bw.css';
+        if (file_exists($bw)) {
+            echo '<link href="/include/bw.css?v=' . filemtime($bw)
+               . '" rel="stylesheet" type="text/css">' . "\n";
+        }
+    }
+    $local_css = __DIR__ . '/style.css';
+    $v = file_exists($local_css) ? filemtime($local_css) : '';
+    echo '<link rel="stylesheet" href="style.css?v=' . h($v) . '">' . "\n";
+}
+
+// ----------------------------------------------------------------------
 // KJV inline-Strong's-tag renderer.
 // ----------------------------------------------------------------------
 // Source text looks like:

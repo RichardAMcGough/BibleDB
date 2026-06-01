@@ -7,9 +7,10 @@
 // points, accents, spaces, or punctuation), then lays the letters out in
 // an N-column grid with horizontal and vertical scroll bars.
 
-require __DIR__ . '/db.php';
-require __DIR__ . '/book_aliases.php';
-require __DIR__ . '/helpers.php';
+require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/book_aliases.php';
+require_once __DIR__ . '/helpers.php';
+require_once __DIR__ . '/els_lib.php';
 
 // Forward AJAX calls from the verse-selector dropdowns.
 if (isset($_GET['api'])) { require __DIR__ . '/api.php'; }
@@ -52,84 +53,7 @@ $verse    = in_array($verse, $verses) ? $verse : (int)$verses[0];
 // -----------------------------------------------------------------------
 // Letter-stripping helpers
 // -----------------------------------------------------------------------
-
-/**
- * Strip a raw word string down to its bare letters for ELS display.
- *   Hebrew: keep U+05D0–U+05EA (aleph-tav) only.
- *   Greek:  keep U+0391–U+03A9 / U+03B1–U+03C9 (Α-Ω / α-ω) only.
- *   English:keep A-Z only (uppercased).
- */
-function els_strip(string $text, string $lang): string {
-    if ($lang === 'Hebrew') {
-        // Hebrew niqqud (U+05B0-U+05C7) and cantillation marks (U+0591-U+05AE)
-        // are already separate code-points from consonants (U+05D0-U+05EA),
-        // so no NFD decomposition is needed — the range filter does it all.
-        preg_match_all('/[\x{05D0}-\x{05EA}]/u', $text, $m);
-        return implode('', $m[0]);
-    }
-
-    if ($lang === 'Greek') {
-        // Strip parenthesised transliteration added by the DB import:
-        // "Ἐν (En)" → "Ἐν"
-        $text = preg_replace('/\s*\([^)]+\)/u', '', $text);
-        if (class_exists('Normalizer')) {
-            // NFD decomposes polytonic precomposed chars so combining diacritics
-            // become separate code-points and the base-letter filter discards them.
-            // Exception: U+0345 COMBINING GREEK YPOGEGRAMMENI (iota subscript)
-            // is a real letter — replace it with plain ι before filtering.
-            $text = \Normalizer::normalize($text, \Normalizer::FORM_D);
-            $text = preg_replace('/\x{0345}/u', "\u{03B9}", $text); // ͅ → ι
-            preg_match_all('/[\x{0391}-\x{03A9}\x{03B1}-\x{03C9}]/u', $text, $m);
-            return implode('', $m[0]);
-        } else {
-            // Without the intl extension: match basic Greek + Greek Extended.
-            // Precomposed chars that include an iota subscript (ypogegrammeni /
-            // prosgegrammeni) are expanded to base-vowel + ι because the iota
-            // counts as its own letter in Ancient Greek.
-            preg_match_all('/[\x{0391}-\x{03C9}\x{1F00}-\x{1FFF}]/u', $text, $m);
-            $result = '';
-            foreach ($m[0] as $ch) {
-                $cp = mb_ord($ch);
-                // U+1F80-U+1F8F: alpha + ypogegrammeni (lower 00-07, upper 08-0F)
-                if ($cp >= 0x1F80 && $cp <= 0x1F8F) {
-                    $result .= ($cp <= 0x1F87 ? 'α' : 'Α') . 'ι';
-                // U+1F90-U+1F9F: eta + ypogegrammeni
-                } elseif ($cp >= 0x1F90 && $cp <= 0x1F9F) {
-                    $result .= ($cp <= 0x1F97 ? 'η' : 'Η') . 'ι';
-                // U+1FA0-U+1FAF: omega + ypogegrammeni
-                } elseif ($cp >= 0x1FA0 && $cp <= 0x1FAF) {
-                    $result .= ($cp <= 0x1FA7 ? 'ω' : 'Ω') . 'ι';
-                // Scattered alpha + ypogegrammeni: ᾲ ᾳ ᾴ ᾷ
-                } elseif (in_array($cp, [0x1FB2, 0x1FB3, 0x1FB4, 0x1FB7], true)) {
-                    $result .= 'αι';
-                // ᾼ (capital Alpha + prosgegrammeni)
-                } elseif ($cp === 0x1FBC) {
-                    $result .= 'Αι';
-                // Scattered eta + ypogegrammeni: ῂ ῃ ῄ ῇ
-                } elseif (in_array($cp, [0x1FC2, 0x1FC3, 0x1FC4, 0x1FC7], true)) {
-                    $result .= 'ηι';
-                // ῌ (capital Eta + prosgegrammeni)
-                } elseif ($cp === 0x1FCC) {
-                    $result .= 'Ηι';
-                // Scattered omega + ypogegrammeni: ῲ ῳ ῴ ῷ
-                } elseif (in_array($cp, [0x1FF2, 0x1FF3, 0x1FF4, 0x1FF7], true)) {
-                    $result .= 'ωι';
-                // ῼ (capital Omega + prosgegrammeni)
-                } elseif ($cp === 0x1FFC) {
-                    $result .= 'Ωι';
-                } else {
-                    $result .= $ch; // no iota subscript — use as-is
-                }
-            }
-            return $result;
-        }
-    }
-
-    // English (KJV): strip Strong's tags then keep only letters.
-    $text = preg_replace('/<\d+>/', '', $text);
-    $text = preg_replace('/[^A-Za-z]/', '', $text);
-    return strtoupper($text);
-}
+// `els_strip()` lives in els_lib.php so api.php can call it too.
 
 // -----------------------------------------------------------------------
 // Gematria / isopsephy / ordinal values
@@ -223,157 +147,8 @@ function els_letter_value(string $ch, string $lang): int {
 // -----------------------------------------------------------------------
 // Cross-boundary text fetch
 // -----------------------------------------------------------------------
-
-/**
- * Fetch at least $max_letters bare letters starting at (book, chapter, verse)
- * and continuing across chapter/book breaks.
- *
- * Returns an array:
- *   letters    string   — stripped letter string (possibly shorter than
- *                         $max_letters if canon ends before we get enough)
- *   lang       string   — 'Hebrew' | 'Greek' | 'English'
- *   is_rtl     bool
- *   from_ref   array    — ['book'=>osis, 'chapter'=>int, 'verse'=>int]
- *   to_ref     array    — same, last verse that contributed letters
- */
-function els_fetch(string $book_code, int $chapter, int $verse,
-                   string $edition_code, int $max_letters): array {
-
-    $pdo  = bible_pdo();
-    $lang = match ($edition_code) {
-        'BHS'         => 'Hebrew',
-        'NA28', 'TR'  => 'Greek',
-        'KJV'         => 'English',
-        default       => 'English',
-    };
-
-    // ---- KJV: query verse-level text from bible_kjv via Verse_Order ----
-    if ($edition_code === 'KJV') {
-        // Resolve the global Verse_Order for the starting position.
-        $sv = $pdo->prepare(
-            "SELECT k.Verse_Order
-               FROM bible_kjv k
-               JOIN book b ON b.id = k.Book
-              WHERE b.osis_code = ? AND k.Chapter = ? AND k.Verse = ?
-              LIMIT 1"
-        );
-        $sv->execute([$book_code, $chapter, $verse]);
-        $start_order = (int)($sv->fetchColumn() ?: 1);
-
-        // One KJV verse averages ~120 letters; fetch generously.
-        $v_limit = max(100, (int)ceil($max_letters / 80) + 10);
-        $sv2 = $pdo->prepare(
-            "SELECT Verse_Text, Book, Chapter, Verse
-               FROM bible_kjv
-              WHERE Verse_Order >= ?
-              ORDER BY Verse_Order
-              LIMIT $v_limit"
-        );
-        $sv2->execute([$start_order]);
-        $rows = $sv2->fetchAll();
-
-        $letters  = '';
-        $from_ref = $to_ref = null;
-        foreach ($rows as $r) {
-            $stripped = els_strip((string)$r['Verse_Text'], 'English');
-            if ($stripped === '') continue;
-            if ($from_ref === null) {
-                // Reverse-lookup osis_code for the display reference.
-                $bk = $pdo->prepare("SELECT osis_code FROM book WHERE id = ? LIMIT 1");
-                $bk->execute([(int)$r['Book']]);
-                $from_ref = ['book' => (string)($bk->fetchColumn() ?: ''), 'chapter' => (int)$r['Chapter'], 'verse' => (int)$r['Verse']];
-            }
-            $letters .= $stripped;
-            if (mb_strlen($letters) >= $max_letters) break;
-            $to_ref = ['book' => $from_ref['book'], 'chapter' => (int)$r['Chapter'], 'verse' => (int)$r['Verse']];
-        }
-        // Correct to_ref book when we've crossed into another book.
-        if ($to_ref === null) $to_ref = $from_ref;
-
-        return [
-            'letters'  => mb_substr($letters, 0, $max_letters),
-            'lang'     => 'English',
-            'is_rtl'   => false,
-            'from_ref' => $from_ref,
-            'to_ref'   => $to_ref,
-        ];
-    }
-
-    // ---- BHS / NA28 / TR: query word.text_original ----
-    // Get the book_order of the starting book so we can span boundaries.
-    $bo_stmt = $pdo->prepare("SELECT book_order FROM book WHERE osis_code = ? LIMIT 1");
-    $bo_stmt->execute([$book_code]);
-    $start_bo = (int)($bo_stmt->fetchColumn() ?: 0);
-
-    // Fetch more words than we need; we stop early once we have enough letters.
-    // Hebrew words average ~5 letters, Greek ~5, so letters/4 words is safe.
-    $w_limit = max(300, (int)ceil($max_letters / 3) + 50);
-
-    if ($edition_code === 'BHS') {
-        $sql =
-            "SELECT w.text_original, b.osis_code, v.chapter, v.verse
-               FROM word w
-               JOIN verse v ON v.id = w.verse_id
-               JOIN book b  ON b.id = v.book_id
-              WHERE b.language = 'Hebrew'
-                AND (   b.book_order > :sbo
-                     OR (b.book_order = :sbo2 AND v.chapter > :sc)
-                     OR (b.book_order = :sbo3 AND v.chapter = :sc2 AND v.verse >= :sv))
-              ORDER BY b.book_order, v.chapter, v.verse, w.position
-              LIMIT $w_limit";
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute([
-            ':sbo'  => $start_bo, ':sbo2' => $start_bo, ':sc'  => $chapter,
-            ':sbo3' => $start_bo, ':sc2'  => $chapter,  ':sv'  => $verse,
-        ]);
-    } else {
-        // NA28 or TR: filter by word_edition
-        $edition_id = bible_edition_id($edition_code);
-        if ($edition_id === null) {
-            return ['letters' => '', 'lang' => 'Greek', 'is_rtl' => false, 'from_ref' => null, 'to_ref' => null];
-        }
-        $sql =
-            "SELECT w.text_original, b.osis_code, v.chapter, v.verse
-               FROM word w
-               JOIN verse v         ON v.id = w.verse_id
-               JOIN book b          ON b.id = v.book_id
-               JOIN word_edition we ON we.word_id = w.id AND we.edition_id = :eid
-              WHERE (   b.book_order > :sbo
-                     OR (b.book_order = :sbo2 AND v.chapter > :sc)
-                     OR (b.book_order = :sbo3 AND v.chapter = :sc2 AND v.verse >= :sv))
-              ORDER BY b.book_order, v.chapter, v.verse, w.position
-              LIMIT $w_limit";
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute([
-            ':eid'  => $edition_id,
-            ':sbo'  => $start_bo, ':sbo2' => $start_bo, ':sc'  => $chapter,
-            ':sbo3' => $start_bo, ':sc2'  => $chapter,  ':sv'  => $verse,
-        ]);
-    }
-
-    $rows     = $stmt->fetchAll();
-    $letters  = '';
-    $from_ref = $to_ref = null;
-
-    foreach ($rows as $r) {
-        $stripped = els_strip((string)$r['text_original'], $lang);
-        if ($stripped === '') continue;
-        if ($from_ref === null) {
-            $from_ref = ['book' => (string)$r['osis_code'], 'chapter' => (int)$r['chapter'], 'verse' => (int)$r['verse']];
-        }
-        $letters .= $stripped;
-        $to_ref = ['book' => (string)$r['osis_code'], 'chapter' => (int)$r['chapter'], 'verse' => (int)$r['verse']];
-        if (mb_strlen($letters) >= $max_letters) break;
-    }
-
-    return [
-        'letters'  => mb_substr($letters, 0, $max_letters),
-        'lang'     => $lang,
-        'is_rtl'   => ($lang === 'Hebrew'),
-        'from_ref' => $from_ref,
-        'to_ref'   => $to_ref,
-    ];
-}
+// `els_fetch()` lives in els_lib.php so api.php can call it too. In remote
+// API mode it delegates to remote_api_call('els_fetch', ...).
 
 // -----------------------------------------------------------------------
 // Fetch the letters
@@ -429,18 +204,18 @@ ob_start(); ?>
 // -----------------------------------------------------------------------
 // Page HTML
 // -----------------------------------------------------------------------
-?><?php require('../include/bwHeader.inc'); ?>
+?>
+<?php bible_render_layout_header(); ?>
 <html>
 <head>
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="author" content="Richard Amiel McGough">
 <title>ELS Grid — <?= h($book_code) ?> <?= (int)$chapter ?>:<?= (int)$verse ?> (<?= h($edition_code) ?>)</title>
-<link href="/include/bw.css?v=<?= filemtime($_SERVER['DOCUMENT_ROOT'].'/include/bw.css') ?>" rel="stylesheet" type="text/css">
-<link rel="stylesheet" href="/bible/style.css?v=<?= filemtime($_SERVER['DOCUMENT_ROOT'].'/bible/style.css') ?>">
+<?php bible_render_layout_styles(); ?>
 </head>
 <body>
-<?php require('../include/bwBanner.php'); ?>
+<?php bible_render_layout_banner(); ?>
 <div class="bible-layout">
 <main class="bible-main">
 

@@ -1,14 +1,18 @@
 <?php
 // api.php — AJAX JSON endpoints for the Bible Browser dropdown chain.
 //
-// Called by dropdowns.js via /bible/api.php?api=<endpoint>&...
+// Called by dropdowns.js, strongs-tooltip.js, etc. via the relative URL
+// `api.php?api=<endpoint>&...` — resolves correctly whether the site is
+// served at /bible/ (Apache/IIS) or at the origin root (php -S).
 // Also handles the strongs and viewcount lookups used by other JS files.
 //
 // This file always sends a JSON response and exits. It must NOT produce
 // any output before the header() call.
 
-require __DIR__ . '/db.php';
-require __DIR__ . '/book_aliases.php';
+require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/book_aliases.php';
+require_once __DIR__ . '/search_lib.php';
+require_once __DIR__ . '/els_lib.php';
 
 header('Content-Type: application/json; charset=utf-8');
 try {
@@ -105,6 +109,43 @@ try {
             $vc = (int)($s->fetchColumn() ?: 0);
             $tc = (int)$pdo->query("SELECT COALESCE(SUM(view_count),0) FROM verse_views")->fetchColumn();
             echo json_encode(['verse' => $vc, 'total' => $tc]);
+            break;
+
+        case 'kjv_verse':
+            $book   = trim($_GET['book']    ?? '');
+            $chap   = (int)($_GET['chapter'] ?? 0);
+            $vrs    = (int)($_GET['verse']   ?? 0);
+            $text   = null;
+            if ($book !== '' && $chap > 0 && $vrs > 0) {
+                $text = bible_kjv_verse_clean($book, $chap, $vrs);
+            }
+            echo json_encode(['text' => $text]);
+            break;
+
+        case 'search_gematria':
+            $value = (int)($_GET['value'] ?? 0);
+            echo json_encode(bible_search_gematria($value));
+            break;
+
+        case 'search_verses':
+            $mode = strtolower(trim($_GET['mode'] ?? 'strongs'));
+            $q    = trim($_GET['q'] ?? '');
+            $lang = trim($_GET['lang'] ?? '');
+            echo json_encode(bible_search_verses($mode, $q, $lang));
+            break;
+
+        case 'els_fetch':
+            $book    = trim($_GET['book']    ?? '');
+            $chap    = (int)($_GET['chapter'] ?? 0);
+            $vrs     = (int)($_GET['verse']   ?? 0);
+            $edition = trim($_GET['edition'] ?? '');
+            $letters = (int)($_GET['letters'] ?? 0);
+            if ($book === '' || $chap < 1 || $vrs < 1 || $edition === '' || $letters < 1) {
+                http_response_code(400);
+                echo json_encode(['error' => 'book, chapter, verse, edition, and letters are required']);
+                break;
+            }
+            echo json_encode(els_fetch($book, $chap, $vrs, $edition, $letters));
             break;
 
         // New coarse-grained endpoint for remote dev use

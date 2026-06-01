@@ -5,28 +5,18 @@
 //   mode â€” strongs | text
 //   lang â€” Hebrew | Greek  (used for text normalisation)
 
-require __DIR__ . '/db.php';
-require __DIR__ . '/helpers.php';
-
-// In remote API mode, search features (which rely on local tables, fulltext indexes,
-// and stored procedures) are not available.
-if (should_use_remote_api()) {
-    echo "<p>Search functionality is currently disabled when using remote API mode.</p>";
-    echo "<p>Please use a local database connection for search features.</p>";
-    exit;
-}
-
-// Escape LIKE special characters in a user-supplied string so that
-// '%' and '_' are treated as literals, not wildcards.
-function escape_like(string $s): string {
-    return str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $s);
-}
+require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/helpers.php';
+require_once __DIR__ . '/search_lib.php';
 
 $q_raw = trim($_GET['q']    ?? '');
 $mode  = strtolower(trim($_GET['mode'] ?? 'strongs'));
 $lang  = trim($_GET['lang'] ?? '');
 
 // Handle JSON API requests forwarded here (strongs-tooltip.js, verse-tooltip.js).
+// Both lookups go through bible_*() helpers in db.php that dispatch to the
+// remote API in remote mode, so this page exposes the same endpoints in
+// either mode.
 if (isset($_GET['api'])) {
     header('Content-Type: application/json; charset=utf-8');
     switch ($_GET['api']) {
@@ -40,16 +30,7 @@ if (isset($_GET['api'])) {
             $verse   = (int)($_GET['verse']   ?? 0);
             $text    = null;
             if ($osis !== '' && $chapter > 0 && $verse > 0) {
-                try {
-                    $stmt = bible_pdo()->prepare(
-                        'SELECT Verse_Text_Clean FROM bible_kjv
-                          WHERE Book = (SELECT id FROM book WHERE osis_code = ? LIMIT 1)
-                            AND Chapter = ? AND Verse = ? LIMIT 1'
-                    );
-                    $stmt->execute([$osis, $chapter, $verse]);
-                    $row  = $stmt->fetch();
-                    $text = $row ? (string)$row['Verse_Text_Clean'] : null;
-                } catch (Throwable $e) { /* fall through, $text stays null */ }
+                $text = bible_kjv_verse_clean($osis, $chapter, $verse);
             }
             echo json_encode(['text' => $text]);
             break;
@@ -67,73 +48,27 @@ if ($mode === 'gematria') {
         header('Location: index.php');
         exit;
     }
-    $pdo = bible_pdo();
 
-    // Pre-fetch book id â†’ name/osis_code lookup
-    $books = [];
-    foreach ($pdo->query('SELECT id, name, osis_code FROM book ORDER BY book_order') as $b) {
-        $books[(int)$b['id']] = $b;
-    }
-
-    // Call stored procedure (returns one row per word occurrence, Bible order)
-    $stmt = $pdo->prepare('CALL GetGematriaWords(?)');
-    $stmt->execute([$gem_value]);
-    $gem_rows = $stmt->fetchAll();
-    $stmt->closeCursor();
-
-    // Group by text_search, deduplicating verse references
-    $groups = [];
-    $gem_occ_count = 0;
-    $gem_truncated = false;
-    foreach ($gem_rows as $row) {
-        if ($gem_truncated) break;
-        // Strip Unicode punctuation so λόγῳ, / λόγω. / λόγῳ all map to the same bucket
-        $ts = preg_replace('/\p{P}+/u', '', $row['text_search']);
-        if (!isset($groups[$ts])) {
-            $groups[$ts] = [
-                'text_original'   => $row['text_original'],
-                'transliteration' => $row['transliteration'],
-                'translation'     => $row['translation'],
-                'strongs_primary' => $row['strongs_primary'],
-                'language'        => $row['language'],
-                'seen'            => [],
-                'verses'          => [],
-            ];
-        }
-        $book = $books[(int)$row['book_id']] ?? null;
-        if ($book) {
-            $vkey = $row['book_id'] . ':' . $row['chapter'] . ':' . $row['verse'];
-            if (!isset($groups[$ts]['seen'][$vkey])) {
-                $groups[$ts]['seen'][$vkey] = true;
-                $groups[$ts]['verses'][] = [
-                    'book_name' => $book['name'],
-                    'osis_code' => $book['osis_code'],
-                    'chapter'   => (int)$row['chapter'],
-                    'verse'     => (int)$row['verse'],
-                ];
-                $gem_occ_count++;
-                if ($gem_occ_count >= 6000) $gem_truncated = true;
-            }
-        }
-    }
-    foreach ($groups as &$g) unset($g['seen']);
-    unset($g);
-
-    $form_count = count($groups);
-    $total_occ  = array_sum(array_map(fn($g) => count($g['verses']), $groups));
-    ?><?php require('../include/bwHeader.inc'); ?>
-
+    // bible_search_gematria dispatches to remote API in remote mode and
+    // runs the stored proc + grouping locally otherwise. Either way the
+    // shape is the same so the renderer below stays unchanged.
+    $gem_result    = bible_search_gematria($gem_value);
+    $groups        = $gem_result['groups'];
+    $gem_truncated = $gem_result['truncated'];
+    $form_count    = $gem_result['form_count'];
+    $total_occ     = $gem_result['total_occ'];
+    ?>
+<?php bible_render_layout_header(); ?>
 <html>
 <head>
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="author" content="Richard Amiel McGough">
 <title>Gematria <?= (int)$gem_value ?> &mdash; Bible Browser</title>
-<link href="/include/bw.css?v=<?= filemtime($_SERVER['DOCUMENT_ROOT'].'/include/bw.css') ?>" rel=stylesheet type='text/css'>
-<link rel="stylesheet" href="/bible/style.css?v=<?= filemtime($_SERVER['DOCUMENT_ROOT'].'/bible/style.css') ?>">
+<?php bible_render_layout_styles(); ?>
 </head>
 <body>
-<?php require('../include/bwBanner.php'); ?>
+<?php bible_render_layout_banner(); ?>
 <div class="bible-layout">
 <main class="bible-main">
 <div class="selector">
@@ -240,184 +175,31 @@ if ($q_raw === '') {
     exit;
 }
 
-// Split on commas, drop empties, re-index.
+// Keep $terms locally for the rendering header (display_q / multi flag).
 $terms = array_values(array_filter(array_map('trim', explode(',', $q_raw))));
 if (empty($terms)) {
     header('Location: index.php');
     exit;
 }
 
-// â”€â”€ Normalise a text query to match the text_search column â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-function normalize_query(string $text, string $lang): string {
-    $text = preg_replace('/\s*\([^)]+\)/u', '', $text);   // strip transliteration parens
-    $text = str_replace(['/', '\\'], '', $text);           // strip STEPBible separators
-    $text = trim($text);
+// bible_search_verses dispatches to the remote API in remote mode and runs
+// the full normalise + SQL pipeline locally otherwise. The return shape is
+// the same in either mode so the renderer below is unchanged.
+$search_result = bible_search_verses($mode, $q_raw, $lang);
+$rows          = $search_result['rows'];
+$truncated     = $search_result['truncated'];
+$not_found     = $search_result['not_found'];
+$norms         = $search_result['norms'];
+$error         = !empty($search_result['error'])
+                  ? 'A database error occurred. Please try again.'
+                  : null;
 
-    if (strtolower($lang) === 'hebrew') {
-        if (function_exists('normalizer_normalize')) {
-            $text = normalizer_normalize($text, Normalizer::NFD);
-        }
-        // Strip Hebrew vowel points and cantillation (U+0591â€“U+05C7, U+FB1E)
-        $text = preg_replace('/[\x{0591}-\x{05C7}\x{FB1E}]/u', '', $text);
-        return trim($text);
-    } else {
-        // Greek: NFD â†’ strip combining diacritics (preserve U+0345 iota subscript)
-        //        â†’ deduplicate U+0345 (browser text-selection can yield a stray
-        //          extra U+0345 after precomposed chars like á¿‡ U+1FC7 or á¿† U+1FC6)
-        //        â†’ NFC â†’ lowercase
-        //        â†’ explicit vowel+U+0345 composition in case ICU NFC missed it
-        //          (á¿† U+1FC6 is perispomeni-only; the separate U+0345 must still
-        //          compose with the base Î· to give á¿ƒ U+1FC3 for BINARY matching).
-        if (function_exists('normalizer_normalize')) {
-            $text = normalizer_normalize($text, Normalizer::NFD);
-            $text = preg_replace('/[\x{0300}-\x{0344}\x{0346}-\x{036F}]/u', '', $text);
-            $text = preg_replace('/\x{0345}{2,}/u', "\u{0345}", $text);
-            $text = normalizer_normalize($text, Normalizer::NFC);
-        }
-        $text = mb_strtolower(trim($text));
-        // Defensive explicit composition: Î±/Î·/Ï‰ + U+0345 â†’ á¾³/á¿ƒ/á¿³.
-        // Catches the case where NFC left them uncomposed (e.g. PHP ICU quirks).
-        return str_replace(
-            ["\u{03B1}\u{0345}", "\u{03B7}\u{0345}", "\u{03C9}\u{0345}"],
-            ["\u{1FB3}",         "\u{1FC3}",         "\u{1FF3}"],
-            $text
-        );
-    }
+// Original behaviour: bubble the underlying error message up so the renderer
+// can still hint at "run add_verse_search.py" when text_search is missing.
+if (!empty($search_result['error']) && str_contains($search_result['error'], 'text_search')) {
+    $error = $search_result['error'];
 }
 
-// â”€â”€ Build SQL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-const RESULT_LIMIT = 6001;
-$pdo    = bible_pdo();
-$rows   = [];
-$error  = null;
-$norms  = [];   // display terms for the results header
-
-$where_sql  = '';
-$params     = [];
-$not_found  = false;
-
-if ($mode === 'phrase' && strtolower($lang) === 'english') {
-    // English KJV phrase search â€” match against bible_kjv.Verse_Text_Clean.
-    // Strip sentence punctuation (,;:.!?) from both the needle and the stored
-    // column so that "weeping, and wailing;" finds the same verses as
-    // "weeping and wailing". Comparison is case-insensitive via LOWER().
-    $needle   = trim(preg_replace('/\s+/u', ' ', $q_raw));
-    $needle   = preg_replace('/[,;:.!?]/u', '', $needle);         // strip punctuation
-    $needle   = mb_strtolower(trim(preg_replace('/\s+/u', ' ', $needle)));  // lowercase + tidy
-    $norms[]  = $q_raw;   // show what the user typed in the results header
-    $where_sql = "EXISTS (
-                    SELECT 1
-                      FROM bible_kjv k
-                     WHERE k.Book    = b.id
-                       AND k.Chapter = v.chapter
-                       AND k.Verse   = v.verse
-                       AND LOWER(REGEXP_REPLACE(k.Verse_Text_Clean, '[,;:.!?]', '')) LIKE ?)";
-    $params[]  = '%' . escape_like($needle) . '%';
-} elseif ($mode === 'phrase') {
-    // Whole-phrase search against verse.text_search (Hebrew / Greek).
-    // Normalise the full phrase (treats it as one string â€” spaces are preserved).
-    $norm    = normalize_query($q_raw, $lang);
-    // Strip iota-subscript forms from the phrase query so that LIKE comparisons
-    // work correctly under utf8mb4_unicode_ci (which treats U+0345 as a
-    // zero-weight combining character and silently fails LIKE patterns that
-    // contain á¾³/á¿ƒ/á¿³).  verse.text_search is rebuilt with the same stripping
-    // by add_verse_search.py, so both sides are comparable.
-    if (strtolower($lang) !== 'hebrew') {
-        $norm = str_replace(
-            ["\u{1FB3}", "\u{1FC3}", "\u{1FF3}", "\u{0345}"],
-            ["\u{03B1}", "\u{03B7}", "\u{03C9}", ''],
-            $norm
-        );
-    }
-    $norms[]   = $norm ?: $q_raw;
-    $where_sql = "v.text_search LIKE ?";
-    $params[]  = '%' . escape_like($norm) . '%';
-} else {
-    $exists_clauses = [];
-    if ($mode === 'strongs') {
-        // Strong's: comma-separated codes, AND logic.
-        // Normalise to zero-padded form so 'H430' matches stored '{H0430G}'.
-        // Validate each term against the strongs dictionary first â€” grammatical
-        // helper codes (e.g. H9001â€“H9999) exist in word.strongs but have no
-        // lexical entry and would otherwise return thousands of spurious hits.
-        foreach ($terms as $term) {
-            $search_term = $term;
-            if (preg_match('/^([HG])(\d{1,5})([A-Za-z]?)$/', $term, $sm)) {
-                $search_term = $sm[1] . str_pad($sm[2], 4, '0', STR_PAD_LEFT) . $sm[3];
-            }
-            // Lookup key: strip leading zeros (H0430 â†’ H430) to match strongs.number.
-            $lookup_key = $term;
-            if (preg_match('/^([HG])0*(\d+)([A-Za-z]?)$/', $term, $sm)) {
-                $lookup_key = $sm[1] . $sm[2] . $sm[3];
-            }
-            if (bible_strongs_lookup($lookup_key) === null) {
-                // Code not in the strongs dictionary â€” skip the SQL query.
-                $norms     = [$term];
-                $not_found = true;
-                break;
-            }
-            $exists_clauses[] =
-                "EXISTS (SELECT 1 FROM word w\n"
-              . "         WHERE w.verse_id = v.id AND w.strongs LIKE ?)";
-            $params[] = '%' . escape_like($search_term) . '%';
-            $norms[]  = $term;
-        }
-    } else {
-        // Text: split on commas AND whitespace so "beginning God" becomes
-        // two independent word searches with AND logic.
-        $text_terms = array_values(array_filter(
-            array_map('trim', preg_split('/[\s,]+/u', $q_raw))
-        ));
-        if (strtolower($lang) === 'english') {
-            // English words: search KJV Verse_Text_Clean per word (AND logic).
-            // Strip punctuation and lowercase both sides, same as phrase mode.
-            foreach ($text_terms as $term) {
-                $needle = mb_strtolower(preg_replace('/[,;:.!?]/u', '', $term));
-                $exists_clauses[] =
-                    "EXISTS (\n"
-                  . "  SELECT 1 FROM bible_kjv k\n"
-                  . "   WHERE k.Book = b.id AND k.Chapter = v.chapter AND k.Verse = v.verse\n"
-                  . "     AND LOWER(REGEXP_REPLACE(k.Verse_Text_Clean, '[,;:.!?]', '')) LIKE ?)";
-                $params[] = '%' . escape_like($needle) . '%';
-                $norms[]  = $term;
-            }
-        } else {
-            // Hebrew / Greek: search word.text_search (normalised, no diacritics).
-            // LIKE gives partial matching so "logos" hits "Î»ÏŒÎ³Î¿Ï‚" after normalisation.
-            foreach ($text_terms as $term) {
-                $norm = normalize_query($term, $lang);
-                $exists_clauses[] =
-                    "EXISTS (SELECT 1 FROM word w\n"
-                  . "         WHERE w.verse_id = v.id AND w.text_search LIKE ?)";
-                $params[] = '%' . escape_like($norm) . '%';
-                $norms[]  = $norm ?: $term;
-            }
-        }
-    }
-    $where_sql = implode("\n  AND ", $exists_clauses);
-}
-
-if (!$not_found) {
-    try {
-        $stmt = $pdo->prepare(
-            "SELECT b.name AS book_name, b.osis_code, b.testament,
-                    b.book_order, v.chapter, v.verse
-               FROM verse v
-               JOIN book b ON b.id = v.book_id
-              WHERE $where_sql
-              ORDER BY b.book_order, v.chapter, v.verse
-              LIMIT " . RESULT_LIMIT
-        );
-        $stmt->execute($params);
-        $rows = $stmt->fetchAll();
-    } catch (Throwable $e) {
-        error_log('Bible search error: ' . $e->getMessage());
-        $error = 'A database error occurred. Please try again.';
-    }
-}
-
-$truncated   = !empty($rows) && (count($rows) === RESULT_LIMIT);
-if ($truncated) array_pop($rows);
 $verse_count = count($rows);
 
 // â”€â”€ Group: testament â†’ book â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -439,19 +221,18 @@ $mode_label  = match($mode) {
 };
 $multi       = ($mode !== 'phrase') && count($terms) > 1;
 $display_q   = ($mode === 'phrase') ? h($norms[0]) : implode(' + ', array_map('h', $norms));
-?><?php require('../include/bwHeader.inc'); ?>
-
+?>
+<?php bible_render_layout_header(); ?>
 <html>
 <head>
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="author" content="Richard Amiel McGough">
 <title>Search: <?= h($q_raw) ?> &mdash; Bible Browser</title>
-<link href="/include/bw.css?v=<?= filemtime($_SERVER['DOCUMENT_ROOT'].'/include/bw.css') ?>" rel=stylesheet type='text/css'>
-<link rel="stylesheet" href="/bible/style.css?v=<?= filemtime($_SERVER['DOCUMENT_ROOT'].'/bible/style.css') ?>">
+<?php bible_render_layout_styles(); ?>
 </head>
 <body>
-<?php require('../include/bwBanner.php'); ?>
+<?php bible_render_layout_banner(); ?>
 <div class="bible-layout">
 <main class="bible-main">
     <div class="selector">

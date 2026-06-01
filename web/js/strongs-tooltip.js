@@ -149,8 +149,8 @@
     async function fetchStrongs(code) {
         if (cache.has(code)) return cache.get(code);
         try {
-            const base = window.BIBLE_API_BASE || '/bible';
-            const r = await fetch(`${base}/api.php?api=strongs&code=${encodeURIComponent(code)}`);
+            // Relative URL — works whether the page is served at /bible/ or root.
+            const r = await fetch(`api.php?api=strongs&code=${encodeURIComponent(code)}`);
             if (!r.ok) { cache.set(code, null); return null; }
             const data = await r.json();
             cache.set(code, data);
