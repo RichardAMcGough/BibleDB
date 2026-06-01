@@ -8,6 +8,14 @@
 require __DIR__ . '/db.php';
 require __DIR__ . '/helpers.php';
 
+// In remote API mode, search features (which rely on local tables, fulltext indexes,
+// and stored procedures) are not available.
+if (should_use_remote_api()) {
+    echo "<p>Search functionality is currently disabled when using remote API mode.</p>";
+    echo "<p>Please use a local database connection for search features.</p>";
+    exit;
+}
+
 // Escape LIKE special characters in a user-supplied string so that
 // '%' and '_' are treated as literals, not wildcards.
 function escape_like(string $s): string {
