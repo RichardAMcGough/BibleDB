@@ -1,0 +1,10 @@
+﻿; Copy this file to `config.ini` and fill in your local MariaDB credentials.
+; Values left blank fall back to environment variables (BIBLE_DB_*) and
+; finally to the defaults shown in import_bible.py.
+
+[mariadb]
+host     = 127.0.0.1
+port     = 3306
+user     = root
+password = YOUR_PASSWORD_HERE
+database = stepbible
