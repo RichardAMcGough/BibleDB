@@ -1,8 +1,11 @@
 # Bible Browser — PHP web UI
 
-A drop-in PHP page that displays a full interlinear view of any verse in
-the `stepbible` database. No frameworks, no dependencies beyond PHP and
-the PDO MySQL driver.
+A drop-in PHP page that displays a full interlinear view of any verse.
+
+**Two ways to run it:**
+
+- **With a local database**: Requires PHP + the PDO MySQL extension.
+- **Remote API mode** (recommended for external contributors): Only requires PHP. The UI fetches data from a remote instance instead of a local database. No database driver needed.
 
 > **External contributors:** The web UI is ready for development even if you
 > don’t have a local copy of the full database. Enable remote API mode in
@@ -14,7 +17,7 @@ the PDO MySQL driver.
 | File                | Purpose                                                |
 |---------------------|--------------------------------------------------------|
 | `index.php`         | Main page — verse display + AJAX API for dropdowns     |
-| `db.php`            | PDO connection helper + query functions                |
+| `db.php`            | Database layer (supports both local PDO and remote API mode) |
 | `style.css`         | Page styling                                           |
 | `config.sample.php` | Sample DB credentials — copy to `config.php` and edit  |
 
@@ -22,24 +25,26 @@ the PDO MySQL driver.
 
 ### 1. PHP requirements
 
-Need PHP 7.4+ with the `pdo_mysql` extension. On Windows:
+- **Local database mode**: PHP 7.4+ with the `pdo_mysql` extension.
+- **Remote API mode** (no local database): Just PHP 7.4+. No database extension required.
+
+To check if you have the MySQL driver (only needed for local DB mode):
 
 ```
 php -m | findstr pdo_mysql
 ```
 
-Should print `pdo_mysql`. If not, enable it in your `php.ini`
-(`extension=pdo_mysql` line, then restart your web server).
+If it prints `pdo_mysql`, the extension is enabled. You can enable it in `php.ini` with `extension=pdo_mysql` if needed.
 
-### 2. Configure database credentials
+### 2. Configure credentials
 
 ```cmd
 copy config.sample.php config.php
 notepad config.php
 ```
 
-Set host / user / password / database to match your MariaDB setup.
-Note: On shared hosting the database name is often prefixed (e.g. `yourusername_stepbible` or `biblewhe_stepbible`). Check your hosting control panel for the exact name.
+- **Local database mode**: Set your MariaDB credentials (host, user, password, database). On shared hosting the database name is often prefixed (e.g. `yourusername_stepbible`).
+- **Remote API mode**: Set `'use_remote_api' => true` and provide a `'remote_api_base'` URL. You do **not** need local database credentials.
 
 ### 3. Serve the folder
 
