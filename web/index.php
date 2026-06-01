@@ -23,6 +23,12 @@ function is_bot(): bool {
 
 function record_verse_view(string $book, int $chapter, int $verse): array {
     if (is_bot()) return ['verse' => 0, 'total' => 0];
+
+    // In remote API mode we don't track visits against the remote server
+    if (should_use_remote_api()) {
+        return ['verse' => 0, 'total' => 0];
+    }
+
     try {
         $pdo = bible_pdo();
         $pdo->prepare("CALL record_verse_view(?, ?, ?, @verse_count, @total)")

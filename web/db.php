@@ -5,6 +5,14 @@
 require_once __DIR__ . '/remote_api.php';
 
 function bible_pdo(): PDO {
+    // Guard: never allow local DB access when remote API mode is enabled.
+    if (should_use_remote_api()) {
+        http_response_code(500);
+        die("Direct local database access is disabled (use_remote_api is true in config.php).<br>" .
+            "You should not be seeing this. Make sure all data-fetching functions are going through " .
+            "the remote API wrappers (or add should_use_remote_api() checks).");
+    }
+
     static $pdo = null;
     if ($pdo !== null) {
         return $pdo;

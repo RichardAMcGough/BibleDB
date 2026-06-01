@@ -57,6 +57,11 @@ try {
             break;
 
         case 'viewcount':
+            if (should_use_remote_api()) {
+                // We don't expose visit counts from the remote server for privacy
+                echo json_encode(['verse' => 0, 'total' => 0]);
+                break;
+            }
             $pdo  = bible_pdo();
             $book = trim($_GET['book']    ?? '');
             $chap = (int)($_GET['chapter'] ?? 0);
