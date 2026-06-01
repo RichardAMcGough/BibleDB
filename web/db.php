@@ -8,9 +8,24 @@ function bible_pdo(): PDO {
     // Guard: never allow local DB access when remote API mode is enabled.
     if (should_use_remote_api()) {
         http_response_code(500);
-        die("Direct local database access is disabled (use_remote_api is true in config.php).<br>" .
-            "You should not be seeing this. Make sure all data-fetching functions are going through " .
-            "the remote API wrappers (or add should_use_remote_api() checks).");
+
+        $msg = "Direct local database access is disabled (use_remote_api is true in config.php).";
+
+        $cfg = require __DIR__ . '/config.php';
+        if (!empty($cfg['debug'])) {
+            $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 8);
+            $caller = $trace[1] ?? [];
+            $msg .= "<br><br><strong>Called from:</strong> " . 
+                    htmlspecialchars(($caller['class'] ?? '') . ($caller['type'] ?? '') . ($caller['function'] ?? '')) .
+                    " in " . htmlspecialchars($caller['file'] ?? '') . ":" . ($caller['line'] ?? '') . "<br><br>";
+
+            $msg .= "<strong>Stack trace (first few frames):</strong><pre>" . 
+                    htmlspecialchars(print_r(array_slice($trace, 0, 6), true)) . "</pre>";
+        } else {
+            $msg .= " Some code paths are not yet routed through the remote API. Enable debug in config.php for details.";
+        }
+
+        die($msg);
     }
 
     static $pdo = null;
@@ -400,6 +415,10 @@ function bible_attach_per_word_data(PDO $pdo, array &$words, string $language): 
 
 // Map for navigation: previous/next verse references.
 function bible_neighbor(string $osis_code, int $chapter, int $verse, string $direction): ?array {
+    if (should_use_remote_api()) {
+        return remote_bible_neighbor($osis_code, $chapter, $verse, $direction);
+    }
+
     $pdo = bible_pdo();
     if ($direction === 'next') {
         $sql = "SELECT b.osis_code, v.chapter, v.verse
@@ -632,6 +651,10 @@ function lxx_verse_full(string $lxx_osis_code, int $chapter, int $verse,
 // 'verse', 'subverse'] or null at canon ends.
 function lxx_neighbor(string $lxx_osis_code, int $chapter, int $verse,
                       string $subverse, string $direction): ?array {
+    if (should_use_remote_api()) {
+        return remote_lxx_neighbor($lxx_osis_code, $chapter, $verse, $subverse, $direction);
+    }
+
     $pdo = bible_pdo();
     if ($direction === 'next') {
         $sql = "SELECT b.osis_code, v.chapter, v.verse, v.subverse

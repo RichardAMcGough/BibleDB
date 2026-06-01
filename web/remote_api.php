@@ -105,3 +105,22 @@ function remote_bible_chapters(string $osis_code): array {
 function remote_bible_verses(string $osis_code, int $chapter): array {
     return remote_api_call('verses', ['book' => $osis_code, 'chapter' => $chapter]) ?? [];
 }
+
+function remote_bible_neighbor(string $osis_code, int $chapter, int $verse, string $direction): ?array {
+    return remote_api_call('neighbor', [
+        'book'      => $osis_code,
+        'chapter'   => $chapter,
+        'verse'     => $verse,
+        'direction' => $direction,
+    ]);
+}
+
+function remote_lxx_neighbor(string $lxx_osis_code, int $chapter, int $verse, string $subverse, string $direction): ?array {
+    return remote_api_call('lxx_neighbor', [
+        'book'      => $lxx_osis_code,
+        'chapter'   => $chapter,
+        'verse'     => $verse,
+        'subverse'  => $subverse,
+        'direction' => $direction,
+    ]);
+}

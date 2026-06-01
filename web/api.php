@@ -46,6 +46,31 @@ try {
             }
             break;
 
+        case 'neighbor':
+            $book   = trim($_GET['book'] ?? '');
+            $chap   = (int)($_GET['chapter'] ?? 0);
+            $vrs    = (int)($_GET['verse'] ?? 0);
+            $dir    = $_GET['direction'] ?? 'next';
+            if (!$book || !$chap || !$vrs) {
+                echo json_encode(null);
+                break;
+            }
+            echo json_encode(bible_neighbor($book, $chap, $vrs, $dir));
+            break;
+
+        case 'lxx_neighbor':
+            $book   = trim($_GET['book'] ?? '');
+            $chap   = (int)($_GET['chapter'] ?? 0);
+            $vrs    = (int)($_GET['verse'] ?? 0);
+            $sub    = (string)($_GET['subverse'] ?? '');
+            $dir    = $_GET['direction'] ?? 'next';
+            if (!$book || !$chap || !$vrs) {
+                echo json_encode(null);
+                break;
+            }
+            echo json_encode(lxx_neighbor($book, $chap, $vrs, $sub, $dir));
+            break;
+
         case 'lxx_books':
             // Simple list of LXX books (can be expanded later)
             echo json_encode(lxx_books());
