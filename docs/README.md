@@ -47,14 +47,16 @@ If you want to run the full stack locally:
 
 ### 2. Web UI Setup
 
-1. Copy `web/config.php.sample` → `web/config.php` and update the database credentials.  
-   (On shared hosting the database name is usually prefixed, e.g. `youruser_stepbible`.)
+1. Copy `web/config.php.sample` → `web/config.php` and update the credentials.
 2. Point your web server (Apache, nginx, PHP built-in server, etc.) at the `web/` directory.
 3. Access the interface (example: `http://localhost/stepbible`).
 
+**Important:** The `pdo_mysql` extension is only required if you are connecting to a local database.  
+If you use remote API mode (`'use_remote_api' => true`), you do **not** need any database driver — only PHP.
+
 **Tip for developers without a local database:**
 
-Set `'use_remote_api' => true` and provide a `'remote_api_base'` in `config.php`. The UI will then pull data from a remote instance of this project instead of requiring a local MariaDB database.
+Set `'use_remote_api' => true` and provide a `'remote_api_base'` in `config.php`. The UI will then pull data from a remote instance of this project instead of requiring a local MariaDB database. No MySQL PDO extension is needed in this mode.
 
 ## Development
 
@@ -63,7 +65,7 @@ Set `'use_remote_api' => true` and provide a `'remote_api_base'` in `config.php`
 - The root contains the data loading and processing tools (import pipeline is still being stabilized).
 
 **External contributors welcome!**  
-The web UI is now in the repository and ready for development. You can work on the frontend without setting up the full local database or running the import scripts by using the built-in remote API mode (see below).
+You can develop the web UI without a local database or the `pdo_mysql` extension by using remote API mode (see the Contributing section below).
 
 ## Documentation
 
@@ -77,13 +79,15 @@ Data sources have their own licenses (primarily CC BY 4.0 from STEPBible.org and
 
 ## Contributing / External Development
 
-The web UI is ready for contributors right now.
+The web UI is ready for contributors right now — even without a local database.
 
-Developers who do not have (or do not want to set up) the full local database + import pipeline can work on the frontend by enabling remote API mode:
+Developers can work on the frontend by enabling remote API mode in `config.php`:
 
 1. Copy `web/config.php.sample` → `web/config.php`
 2. Set `'use_remote_api' => true`
-3. Set `'remote_api_base'` to a live instance of the site (e.g. the maintainer’s development server)
+3. Set `'remote_api_base'` to point at a live instance
 
-See `web/README.md` for more details on remote development.
+**No local MariaDB or `pdo_mysql` extension is required** when using remote API mode.
+
+See `web/README.md` for full details on remote development and standalone running.
 
