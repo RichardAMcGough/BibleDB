@@ -1,4 +1,8 @@
-# Project handoff — Bible Database
+# Project handoff — Bible Database (Historical)
+
+> **Note:** This file contains detailed historical notes from many sessions.
+> For current recommended workflows, single source of truth rules, and the easiest
+> way to stand up fresh test databases, please read **`HANDOFF-current.md`** instead.
 
 **Read this first** if you're a Claude (or human) picking up this project mid-stream.
 Everything in this file captures decisions, rationale, conventions, and pending
@@ -12,7 +16,7 @@ Richard is building a local searchable Bible database from the **STEPBible.org**
 tagged Hebrew OT + Greek NT files (CC BY 4.0), augmented with the **BibleWorks**
 NA27 and Scrivener (TR) Greek NT texts. Data is loaded into a local **MariaDB**
 instance and rendered through a **PHP web interface** in `web/`. Windows 11 +
-local web server at `http://localhost/stepbible/`. Database name: **`stepbible`**.
+local web server at `http://localhost/stepbible/`. The database name now has a strict single source of truth: it must be provided via the `BIBLE_DB_NAME` environment variable (it is no longer read from config.ini).
 
 The web UI is an interlinear browser with an **Edition dropdown** (currently
 NA28 and TR) that lets the user view any NT verse as it reads in either
@@ -197,8 +201,15 @@ STEPBible always populates `variant.note` with prose like "ναί ('yes') is onl
 ## 6. The pipeline — full run order
 
 ```
-mysql stepbible < schema.sql
-mysql stepbible < gematria_schema.sql
+# Use the database name you configured in config.ini (single source of truth).
+# Example (replace stepbibletest with your actual DB name from config):
+
+# Easiest way (recommended for fresh test DBs):
+python import_bible.py --create-schema --with-gematria
+
+# Or do it manually:
+mysql stepbibletest < schema.sql
+mysql stepbibletest < gematria_schema.sql
 
 python import_bible.py             # TAHOT/TAGNT → word + variant + etc.
 python compute_gematria.py         # populate gematria_word, gematria_verse
@@ -206,7 +217,7 @@ python import_bw_bibles.py         # Verse_Text from bw_bible → bible_na27, bi
 python populate_verseunicode.py    # BW → normalized Greek into verseunicode columns
 
 # variant.position column (already added; this is for fresh setups)
-mysql stepbible -e "ALTER TABLE variant ADD COLUMN position DECIMAL(6,2) NOT NULL DEFAULT 0;
+mysql stepbibletest -e "ALTER TABLE variant ADD COLUMN position DECIMAL(6,2) NOT NULL DEFAULT 0;
                     CREATE INDEX idx_variant_position ON variant(word_id, position);
                     UPDATE variant v JOIN word w ON w.id = v.word_id SET v.position = w.position;"
 
@@ -491,7 +502,7 @@ words: 623,693 across 59 LXX books
 Run order on Richard's Windows box:
 
 ```
-mysql stepbible < lxx_schema.sql
+mysql stepbibletest < lxx_schema.sql   # (use the name from your config.ini)
 python import_lxx.py
 ```
 
