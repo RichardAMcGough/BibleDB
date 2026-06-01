@@ -47,7 +47,8 @@ Three options, pick whichever you have:
 
 **Built-in PHP dev server** (zero install — just need `php` on PATH):
 ```cmd
-cd "C:\Work\Resurrected\Claude\BibleDB\Bible Database\web"
+# From the root of the BibleDB repository
+cd web
 php -S localhost:8080
 ```
 Then open <http://localhost:8080> in your browser.
