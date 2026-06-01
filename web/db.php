@@ -7,11 +7,10 @@ require_once __DIR__ . '/remote_api.php';
 function bible_pdo(): PDO {
     // Guard: never allow local DB access when remote API mode is enabled.
     if (should_use_remote_api()) {
-        http_response_code(500);
+        $cfg = require __DIR__ . '/config.php';
 
         $msg = "Direct local database access is disabled (use_remote_api is true in config.php).";
 
-        $cfg = require __DIR__ . '/config.php';
         if (!empty($cfg['debug'])) {
             $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 8);
             $caller = $trace[1] ?? [];
@@ -23,6 +22,11 @@ function bible_pdo(): PDO {
                     htmlspecialchars(print_r(array_slice($trace, 0, 6), true)) . "</pre>";
         } else {
             $msg .= " Some code paths are not yet routed through the remote API. Enable debug in config.php for details.";
+        }
+
+        // Only try to set status code if headers haven't been sent yet.
+        if (!headers_sent()) {
+            http_response_code(500);
         }
 
         die($msg);
@@ -472,6 +476,12 @@ function bible_neighbor(string $osis_code, int $chapter, int $verse, string $dir
 // English column.
 
 function kjv_verse_text(int $book_id, int $chapter, int $verse): ?string {
+    // In remote API mode we don't have the bible_kjv table locally.
+    // Fall back to the English text that comes from the remote data.
+    if (should_use_remote_api()) {
+        return null;
+    }
+
     static $cache = [];
     $key = "$book_id.$chapter.$verse";
     if (array_key_exists($key, $cache)) return $cache[$key];
