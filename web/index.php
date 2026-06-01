@@ -202,6 +202,7 @@ $next = $lxx_mode
     ? lxx_neighbor($book_code, $chapter, $last_verse_num, $subverse, 'next')
     : bible_neighbor($book_code, $chapter, $last_verse_num, 'next');
 
+?>
 <?php
 // Standalone / development mode detection.
 // If the external biblewheel.com includes don't exist, use local minimal versions.
@@ -228,6 +229,10 @@ if ($use_local_layout) {
   <link href="/include/bw.css?v=<?= filemtime($_SERVER['DOCUMENT_ROOT'].'/include/bw.css') ?>" rel=stylesheet type='text/css'>
   <link rel="stylesheet" href="/bible/style.css?v=<?= filemtime($_SERVER['DOCUMENT_ROOT'].'/bible/style.css') ?>"><?php // cache-busted by file mtime ?>
 <?php endif; ?>
+
+<script>
+  window.BIBLE_API_BASE = <?= json_encode(get_api_base()) ?>;
+</script>
 </head>
 <body>
 
@@ -520,7 +525,8 @@ const VERSE_REF  = <?= json_encode($range_ref_str) ?>;
     if (!el) return;
     function fmtN(n) { return n.toLocaleString(); }
     function refresh() {
-        fetch('/bible/api.php?api=viewcount'
+        const base = window.BIBLE_API_BASE || '/bible';
+        fetch(`${base}/api.php?api=viewcount`
             + '&book='    + encodeURIComponent(el.dataset.book)
             + '&chapter=' + el.dataset.chapter
             + '&verse='   + el.dataset.verse)

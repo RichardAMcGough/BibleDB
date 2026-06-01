@@ -149,7 +149,8 @@
     async function fetchStrongs(code) {
         if (cache.has(code)) return cache.get(code);
         try {
-            const r = await fetch(`/bible/api.php?api=strongs&code=${encodeURIComponent(code)}`);
+            const base = window.BIBLE_API_BASE || '/bible';
+            const r = await fetch(`${base}/api.php?api=strongs&code=${encodeURIComponent(code)}`);
             if (!r.ok) { cache.set(code, null); return null; }
             const data = await r.json();
             cache.set(code, data);

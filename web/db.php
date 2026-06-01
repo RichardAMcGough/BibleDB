@@ -85,6 +85,21 @@ function should_use_remote_api(): bool {
     return $use_remote;
 }
 
+/**
+ * Returns the base URL for API calls (local or remote).
+ * Used by client-side JS when in remote mode.
+ */
+function get_api_base(): string {
+    if (should_use_remote_api()) {
+        $cfg_path = __DIR__ . '/config.php';
+        if (file_exists($cfg_path)) {
+            $cfg = require $cfg_path;
+            return rtrim($cfg['remote_api_base'] ?? '', '/');
+        }
+    }
+    return '';
+}
+
 // ===================================================================
 // MT / NT query helpers (existing 11-table v2 schema)
 // ===================================================================
