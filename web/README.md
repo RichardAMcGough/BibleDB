@@ -38,8 +38,8 @@ copy config.sample.php config.php
 notepad config.php
 ```
 
-Set host / user / password / database to match your local MariaDB
-setup. The default database name is `stepbible`.
+Set host / user / password / database to match your MariaDB setup.
+Note: On shared hosting the database name is often prefixed (e.g. `yourusername_stepbible` or `biblewhe_stepbible`). Check your hosting control panel for the exact name.
 
 ### 3. Serve the folder
 

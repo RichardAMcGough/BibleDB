@@ -7,7 +7,7 @@ return [
     'port'     => 3306,
     'user'     => 'root',
     'password' => 'YOUR_PASSWORD_HERE',
-    'database' => 'stepbible',
+    'database' => 'stepbible',   // On many shared hosts this will be prefixed, e.g. 'youruser_stepbible' or 'biblewhe_stepbible'
     // Set to true to display PDO errors in the browser (handy during setup).
     'debug'    => true,
 

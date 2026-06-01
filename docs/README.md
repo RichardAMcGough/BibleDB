@@ -47,7 +47,8 @@ If you want to run the full stack locally:
 
 ### 2. Web UI Setup
 
-1. Copy `web/config.php.sample` → `web/config.php` and update the database credentials.
+1. Copy `web/config.php.sample` → `web/config.php` and update the database credentials.  
+   (On shared hosting the database name is usually prefixed, e.g. `youruser_stepbible`.)
 2. Point your web server (Apache, nginx, PHP built-in server, etc.) at the `web/` directory.
 3. Access the interface (example: `http://localhost/stepbible`).
 
