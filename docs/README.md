@@ -7,12 +7,13 @@ Full featured Bible Database with Greek, Hebrew, interlinear, grammar, concordan
 This project consists of two main parts:
 
 1. **Data Import Pipeline** (root directory)
-   - Python scripts that parse and load STEPBible.org tagged Hebrew/Greek texts, BibleWorks editions (NA27, Scrivener TR), and the Rahlfs LXX into a MariaDB database.
+   - One python script parses and loads STEPBible.org tagged Hebrew/Greek texts (BHS, NA27, Scrivener TR).
    - Extensive support for textual variants, morphology, Strong's numbers, gematria, and cross-edition comparison.
+   - Coming: scripts to import LXX and other versions.
 
 2. **Web Interface** (`web/` folder)
    - A PHP-based interlinear Bible browser.
-   - Features include edition switching (NA28, TR, LXX-Rahlfs, etc.), variant cycling, gematria calculations, Strong's tooltips, grammar tooltips, word selection, and powerful search.
+   - Features include edition switching (NA28, TR, BHS), variant cycling, gematria calculations, Strong's tooltips, grammar tooltips, word selection, and powerful search.
 
 ## Project Structure
 
@@ -41,31 +42,21 @@ BibleDB/
 
 If you want to run the full stack locally:
 
-1. Create a MariaDB database (name is up to you, e.g. `stepbible` or `stepbibletest` for a clean test DB). The database name has a **strict single source of truth**: it must be set via the `BIBLE_DB_NAME` environment variable (see `docs/HANDOFF-current.md` for the PowerShell helper and the important "per-session only" note). It is no longer read from `config.ini`.
-2. Copy `config.ini.sample` → `config.ini` and fill in your credentials.
-3. Run the import pipeline. The script `import_bible.py` (with `BIBLE_DB_NAME` set) automatically ensures the core schema + gematria tables as part of creating the DB (see `docs/HANDOFF-current.md` for the simple usage and safety prompt).
+1. Copy `config.ini.sample` → `config.ini` and fill in your credentials and a database name of your choice.
+2. Run the import pipeline command: python scripts/run_pipeline.py --db-name <database name>. It imports everything and configures the DB.
+3. The script displays progress and a "success" message when all steps complete. If there are any errors, check the log in the log folder. 
 
 ### 2. Web UI Setup
 
 1. Copy `web/config.php.sample` → `web/config.php` and update the credentials.
-2. Point your web server (Apache, nginx, PHP built-in server, etc.) at the `web/` directory.
-3. Access the interface (example: `http://localhost/stepbible`).
-
-**Important:** The `pdo_mysql` extension is only required if you are connecting to a local database.  
-If you use remote API mode (`'use_remote_api' => true`), you do **not** need any database driver — only PHP.
-
-**Tip for developers without a local database:**
-
-Set `'use_remote_api' => true` and provide a `'remote_api_base'` in `config.php`. The UI will then pull data from a remote instance of this project instead of requiring a local MariaDB database. No MySQL PDO extension is needed in this mode.
+2. If you do not have a local database, set use_remote_api' => true, and 'remote_api_base' = 'https:biblewheel.com/bible' (or whatever server hosts the db).  
+3. Point your web server (Apache, nginx, PHP built-in server, etc.) at the `web/` directory. 
+4. Access the interface (example: `http://localhost/stepbible`).
 
 ## Development
 
-- The **web UI** can run completely independently of the data import scripts.
-- Most frontend development work happens inside the `web/` folder.
-- The root contains the data loading and processing tools (import pipeline is still being stabilized).
-
-**External contributors welcome!**  
-You can develop the web UI without a local database or the `pdo_mysql` extension by using remote API mode (see the Contributing section below).
+- The **web UI** can run completely independently of the data import scripts if you use the remote api.
+- Most frontend development work happens inside the `web/` folder and requires no updates to the DB.
 
 ## Documentation
 
@@ -75,19 +66,9 @@ You can develop the web UI without a local database or the `pdo_mysql` extension
 
 ## License
 
-Data sources have their own licenses (primarily CC BY 4.0 from STEPBible.org and related projects). See individual source files and the root HANDOFF for attribution details.
+MIT license for the code in this project. Data sources have their own licenses (primarily CC BY 4.0 from STEPBible.org and related projects). See individual source files and the root HANDOFF for attribution details.
 
 ## Contributing / External Development
 
-The web UI is ready for contributors right now — even without a local database.
-
-Developers can work on the frontend by enabling remote API mode in `config.php`:
-
-1. Copy `web/config.php.sample` → `web/config.php`
-2. Set `'use_remote_api' => true`
-3. Set `'remote_api_base'` to point at a live instance
-
-**No local MariaDB or `pdo_mysql` extension is required** when using remote API mode.
-
-See `web/README.md` for full details on remote development and standalone running.
+**External contributors welcome!**  
 
