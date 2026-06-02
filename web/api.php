@@ -177,6 +177,11 @@ try {
 } catch (Throwable $e) {
     http_response_code(500);
     error_log('Bible API error: ' . $e->getMessage());
-    echo json_encode(['error' => 'Internal server error']);
+    $cfg = @include __DIR__ . '/config.php';  // may not exist
+    if (!empty($cfg['debug'])) {
+        echo json_encode(['error' => 'Internal server error', 'detail' => $e->getMessage()]);
+    } else {
+        echo json_encode(['error' => 'Internal server error']);
+    }
 }
 exit;

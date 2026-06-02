@@ -41,9 +41,9 @@ BibleDB/
 
 If you want to run the full stack locally:
 
-1. Create a MariaDB database (name is up to you, e.g. `stepbible` or `stepbibletest` for a clean test DB). The database name has a **strict single source of truth**: it must be set via the `BIBLE_DB_NAME` environment variable. It is no longer read from `config.ini`.
+1. Create a MariaDB database (name is up to you, e.g. `stepbible` or `stepbibletest` for a clean test DB). The database name has a **strict single source of truth**: it must be set via the `BIBLE_DB_NAME` environment variable (see `docs/HANDOFF-current.md` for the PowerShell helper and the important "per-session only" note). It is no longer read from `config.ini`.
 2. Copy `config.ini.sample` → `config.ini` and fill in your credentials.
-3. Run the import pipeline. The easiest way to create the required tables is to pass `--create-schema` to `import_bible.py` (see root `HANDOFF.md` for the full ordered steps and other options).
+3. Run the import pipeline. The script `import_bible.py` (with `BIBLE_DB_NAME` set) automatically ensures the core schema + gematria tables as part of creating the DB (see `docs/HANDOFF-current.md` for the simple usage and safety prompt).
 
 ### 2. Web UI Setup
 

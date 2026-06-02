@@ -904,3 +904,36 @@ The web UI used to assume Apache/IIS was serving it under `/bible/`. Hard-coded 
 - `php -S localhost:8080` with `mklink /J bible web` from one level up — production-style `/bible/...` URLs, standalone or production layout depending on whether the biblewheel includes are found.
 
 **Best-practices outcome**: the `$use_local_layout` boolean and the hard-coded `/bible/...` patterns are gone. Adding a new top-level page now means three helper calls instead of three nested conditionals plus stylesheet boilerplate.
+
+#### Follow-up — NA28↔KJV versification remap (`verse_kjv_alt` table)
+
+STEPBible's TAGNT files use NA28-style versification. Five NT verses don't line up with KJV's older numbering, so a direct KJV lookup against `bible_kjv` returns nothing (or the wrong verse):
+
+| STEPBible (NA28) ref | KJV ref |
+|----------------------|---------|
+| Rev 12:18 | KJV 13:1 (cross-chapter — NA28's 12:18 simply doesn't exist in KJV) |
+| Php 1:16 | KJV 1:17 (NA28 and KJV have these two verses swapped) |
+| Php 1:17 | KJV 1:16 |
+| 2Co 13:13 | KJV 13:14 |
+| 3Jn 1:15 | KJV 1:14 |
+
+**Source of truth**: the TAGNT files annotate every cross-tradition difference inline — every summary header that needs a remap reads `# Ref [KJV X.Y]` (e.g. `# Rev.12.18 [KJV 13.1a]`). The 39 annotations across both TAGNT files reduce to 5 once we filter out the `a`/`b` partial-verse cases where the KJV verse number still exists.
+
+**Build/refresh**: `python scripts/maintenance/fix_kjv_versification.py`
+- Auto-discovers anomalies from the TAGNT source files; nothing hard-coded.
+- Idempotent: drops + re-CREATEs `verse_kjv_alt` on each run.
+- Tiny table (5 rows): `(book_id, na28_chapter, na28_verse, kjv_chapter, kjv_verse)` with `(book_id, na28_chapter, na28_verse)` PK.
+- `--dry-run` flag prints what would be inserted without touching the DB.
+
+**Web wiring** — three KJV-lookup functions in `web/db.php` now check `verse_kjv_alt` whenever the direct hit returns null:
+- `kjv_verse_text($book_id, $chapter, $verse)` — used by `index.php` for the assembled English line.
+- `kjv_verse_order($book_id, $chapter, $verse)` — used wherever Verse_Order indexing matters.
+- `bible_kjv_verse_clean($osis, $chapter, $verse)` — used by `search.php`'s verse-tooltip endpoint.
+
+Plus `web/els_lib.php`'s KJV ELS path uses the same lookup for the starting verse so an ELS run beginning at Rev 12:18 works correctly.
+
+The lookup is implemented by one shared helper `kjv_alt_ref($book_id, $chapter, $verse)` that loads the whole tiny table once into a static cache. If `verse_kjv_alt` is missing (e.g. the maintenance script hasn't been run yet), the helper degrades silently and direct lookups continue to work as before — no error, just no remapping.
+
+**Remote API mode**: works transparently. The local PHP proxies to the live `api.php`, which runs the same `bible_kjv_verse_clean()` against its own DB (with its own `verse_kjv_alt`). Just make sure the live deployment also runs `fix_kjv_versification.py` after any DB rebuild.
+
+**Adding more anomalies later**: nothing to write. If a future STEPBible revision adds new `[KJV X.Y]` annotations, just re-run the script — it picks them up automatically.

@@ -120,15 +120,24 @@ function els_fetch(string $book_code, int $chapter, int $verse,
 
     // ---- KJV: query verse-level text from bible_kjv via Verse_Order ----
     if ($edition_code === 'KJV') {
+        // Resolve book_id once so we can check kjv_alt_ref() if the direct
+        // lookup misses (cross-tradition versification, e.g. Rev 12:18).
+        $bk = $pdo->prepare("SELECT id FROM book WHERE osis_code = ? LIMIT 1");
+        $bk->execute([$book_code]);
+        $start_book_id = (int)($bk->fetchColumn() ?: 0);
+
         $sv = $pdo->prepare(
-            "SELECT k.Verse_Order
-               FROM bible_kjv k
-               JOIN book b ON b.id = k.Book
-              WHERE b.osis_code = ? AND k.Chapter = ? AND k.Verse = ?
-              LIMIT 1"
+            "SELECT Verse_Order FROM bible_kjv
+              WHERE Book = ? AND Chapter = ? AND Verse = ? LIMIT 1"
         );
-        $sv->execute([$book_code, $chapter, $verse]);
-        $start_order = (int)($sv->fetchColumn() ?: 1);
+        $sv->execute([$start_book_id, $chapter, $verse]);
+        $start_order = (int)$sv->fetchColumn();
+        if (!$start_order && $start_book_id
+            && ($alt = kjv_alt_ref($start_book_id, $chapter, $verse)) !== null) {
+            $sv->execute([$start_book_id, $alt['chapter'], $alt['verse']]);
+            $start_order = (int)$sv->fetchColumn();
+        }
+        if (!$start_order) $start_order = 1;
 
         // One KJV verse averages ~120 letters; fetch generously.
         $v_limit = max(100, (int)ceil($max_letters / 80) + 10);

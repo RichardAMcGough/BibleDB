@@ -212,14 +212,29 @@ function bible_kjv_verse_clean(string $osis_code, int $chapter, int $verse): ?st
     }
 
     try {
-        $stmt = bible_pdo()->prepare(
+        $pdo = bible_pdo();
+        // Resolve book_id once so we can pass it to both queries and to
+        // kjv_alt_ref() (which is keyed by book_id, not osis_code).
+        $bk = $pdo->prepare("SELECT id FROM book WHERE osis_code = ? LIMIT 1");
+        $bk->execute([$osis_code]);
+        $book_id = (int)($bk->fetchColumn() ?: 0);
+        if ($book_id === 0) return $cache[$key] = null;
+
+        $stmt = $pdo->prepare(
             'SELECT Verse_Text_Clean FROM bible_kjv
-              WHERE Book = (SELECT id FROM book WHERE osis_code = ? LIMIT 1)
-                AND Chapter = ? AND Verse = ? LIMIT 1'
+              WHERE Book = ? AND Chapter = ? AND Verse = ? LIMIT 1'
         );
-        $stmt->execute([$osis_code, $chapter, $verse]);
+        $stmt->execute([$book_id, $chapter, $verse]);
         $row = $stmt->fetch();
-        return $cache[$key] = ($row ? (string)$row['Verse_Text_Clean'] : null);
+        if ($row) return $cache[$key] = (string)$row['Verse_Text_Clean'];
+
+        // Direct miss — check the NA28→KJV versification remap.
+        if (($alt = kjv_alt_ref($book_id, $chapter, $verse)) !== null) {
+            $stmt->execute([$book_id, $alt['chapter'], $alt['verse']]);
+            $row = $stmt->fetch();
+            if ($row) return $cache[$key] = (string)$row['Verse_Text_Clean'];
+        }
+        return $cache[$key] = null;
     } catch (Throwable $e) {
         return $cache[$key] = null;
     }
@@ -508,9 +523,40 @@ function bible_neighbor(string $osis_code, int $chapter, int $verse, string $dir
 // follow the English word they refer to. Verse_Text_Clean is the same
 // text with the tags stripped.
 //
-// Returns null if the verse isn't present (Rev 12:18 and friends) or
-// the table is missing — the caller falls back to the STEPBible
-// English column.
+// Cross-tradition versification mismatches (Rev 12:18, Php 1:16/1:17,
+// 2Co 13:13, 3Jn 1:15) are handled via the `verse_kjv_alt` table — see
+// kjv_alt_ref() below and scripts/maintenance/fix_kjv_versification.py.
+//
+// Returns null only when the verse genuinely has no KJV mapping (e.g.
+// the table is missing) — the caller falls back to the STEPBible English.
+
+// Look up an NA28-style ref in verse_kjv_alt. Returns ['chapter','verse']
+// for the KJV equivalent, or null if no remap applies. Caches the whole
+// table on first call (it's tiny — single-digit rows).
+function kjv_alt_ref(int $book_id, int $chapter, int $verse): ?array {
+    static $cache = null;
+    if ($cache === null) {
+        $cache = [];
+        try {
+            $stmt = bible_pdo()->query(
+                "SELECT book_id, na28_chapter, na28_verse, kjv_chapter, kjv_verse
+                   FROM verse_kjv_alt"
+            );
+            foreach ($stmt->fetchAll() as $r) {
+                $k = (int)$r['book_id'] . '|' . (int)$r['na28_chapter']
+                   . '|' . (int)$r['na28_verse'];
+                $cache[$k] = [
+                    'chapter' => (int)$r['kjv_chapter'],
+                    'verse'   => (int)$r['kjv_verse'],
+                ];
+            }
+        } catch (Throwable $e) {
+            // Table missing (e.g. script hasn't been run yet) — degrade
+            // silently and let direct lookups continue to work.
+        }
+    }
+    return $cache["$book_id|$chapter|$verse"] ?? null;
+}
 
 function kjv_verse_text(int $book_id, int $chapter, int $verse): ?string {
     // In remote API mode we don't have the bible_kjv table locally.
@@ -523,7 +569,8 @@ function kjv_verse_text(int $book_id, int $chapter, int $verse): ?string {
     $key = "$book_id.$chapter.$verse";
     if (array_key_exists($key, $cache)) return $cache[$key];
     try {
-        $stmt = bible_pdo()->prepare(
+        $pdo  = bible_pdo();
+        $stmt = $pdo->prepare(
             "SELECT Verse_Text
                FROM bible_kjv
               WHERE Book = ? AND Chapter = ? AND Verse = ?
@@ -531,7 +578,16 @@ function kjv_verse_text(int $book_id, int $chapter, int $verse): ?string {
         );
         $stmt->execute([$book_id, $chapter, $verse]);
         $row = $stmt->fetch();
-        return $cache[$key] = ($row ? (string)$row['Verse_Text'] : null);
+        if ($row) {
+            return $cache[$key] = (string)$row['Verse_Text'];
+        }
+        // Direct miss — check the NA28→KJV versification remap.
+        if (($alt = kjv_alt_ref($book_id, $chapter, $verse)) !== null) {
+            $stmt->execute([$book_id, $alt['chapter'], $alt['verse']]);
+            $row = $stmt->fetch();
+            if ($row) return $cache[$key] = (string)$row['Verse_Text'];
+        }
+        return $cache[$key] = null;
     } catch (PDOException $e) {
         return $cache[$key] = null;
     }
@@ -550,7 +606,8 @@ function kjv_verse_order(int $book_id, int $chapter, int $verse): ?int {
     if (array_key_exists($key, $cache)) return $cache[$key];
     if ($verse === 0) return $cache[$key] = null;
     try {
-        $stmt = bible_pdo()->prepare(
+        $pdo  = bible_pdo();
+        $stmt = $pdo->prepare(
             "SELECT Verse_Order
                FROM bible_kjv
               WHERE Book = ? AND Chapter = ? AND Verse = ?
@@ -558,7 +615,14 @@ function kjv_verse_order(int $book_id, int $chapter, int $verse): ?int {
         );
         $stmt->execute([$book_id, $chapter, $verse]);
         $row = $stmt->fetch();
-        return $cache[$key] = ($row ? (int)$row['Verse_Order'] : null);
+        if ($row) return $cache[$key] = (int)$row['Verse_Order'];
+        // Direct miss — check the NA28→KJV versification remap.
+        if (($alt = kjv_alt_ref($book_id, $chapter, $verse)) !== null) {
+            $stmt->execute([$book_id, $alt['chapter'], $alt['verse']]);
+            $row = $stmt->fetch();
+            if ($row) return $cache[$key] = (int)$row['Verse_Order'];
+        }
+        return $cache[$key] = null;
     } catch (PDOException $e) {
         return $cache[$key] = null;
     }

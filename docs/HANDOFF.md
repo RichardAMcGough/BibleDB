@@ -205,7 +205,7 @@ STEPBible always populates `variant.note` with prose like "ναί ('yes') is onl
 # Example (replace stepbibletest with your actual DB name from config):
 
 # Easiest way (recommended for fresh test DBs):
-python import_bible.py --create-schema --with-gematria
+python import_bible.py
 
 # Or do it manually:
 mysql stepbibletest < schema.sql

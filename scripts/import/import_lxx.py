@@ -35,13 +35,18 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import configparser
 import os
 import re
 import sys
 import time
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Tuple
+
+# Shared DB (single source of truth). Insert scripts/ dir for direct runs.
+_scripts_dir = Path(__file__).resolve().parent.parent
+if str(_scripts_dir) not in sys.path:
+    sys.path.insert(0, str(_scripts_dir))
+from _db import load_config, get_connection, connect  # type: ignore[import-not-found]
 
 # ---------------------------------------------------------------------
 # Constants
@@ -252,13 +257,6 @@ def chunk(iterable, n: int) -> Iterator[list]:
 
 
 # ---------------------------------------------------------------------
-# DB connection — delegate to the single source of truth in import_bible.py
-# (removes any possibility of a 'stepbible' fallback)
-# ---------------------------------------------------------------------
-from import_bible import load_config, get_connection
-
-
-# ---------------------------------------------------------------------
 # Main load
 # ---------------------------------------------------------------------
 
@@ -343,14 +341,11 @@ def main():
             print(f"  {code:8s} -> {osis:10s}  {by_book[code]:>5d} verses")
         return
 
-    # DB connect
+    # DB connect (uses shared _db.connect for banner + live SELECT DATABASE() verification)
     cfg_path = Path(args.config) if args.config else None
     if cfg_path and not cfg_path.is_absolute():
         cfg_path = Path(__file__).parent / cfg_path
-    cfg = load_config(cfg_path)
-    print(f"\nConnecting to {cfg['user']}@{cfg['host']}:{cfg['port']}/{cfg['database']} ...")
-    conn, driver = get_connection(cfg)
-    cur = conn.cursor()
+    conn, cur, cfg = connect(cfg_path)  # also prints + verifies DB name
 
     # Resolve book ids from book_lxx (seeded by lxx_schema.sql)
     cur.execute("SELECT id, osis_code FROM book_lxx")
