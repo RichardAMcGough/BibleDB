@@ -11,6 +11,7 @@ function _bsActive(string $file): string {
     <p class="bible-sidebar-title">Bible DB</p>
     <nav class="bible-sidebar-nav">
       <a href="index.php"<?= _bsActive('index.php') ?>>Bible Viewer</a>
+      <a href="help.php"<?= _bsActive('help.php') ?>>Help &amp; What's New</a>
       <?php if ($_bsCurrentPage === 'search.php'): ?>
       <a href="search.php" class="active">Search Results</a>
       <?php endif; ?>
