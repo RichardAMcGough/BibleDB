@@ -160,7 +160,8 @@ try {
                 echo json_encode(['error' => 'book, chapter, verse required']);
                 break;
             }
-            $notes = get_verse_notes($book, $chap, $vrs);
+            $u = get_bible_user();
+            $notes = get_verse_notes($book, $chap, $vrs, $u);
             foreach ($notes as &$n) {
                 $n['rendered'] = bbcode_to_html($n['note_text']);
             }

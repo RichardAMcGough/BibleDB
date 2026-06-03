@@ -158,6 +158,7 @@ function get_bible_user(): array {
         'id'       => (int)$_SESSION['bible_notes_user_id'],
         'name'     => $_SESSION['bible_notes_username'],
         'is_guest' => !$is_local_dev,
+        'is_admin' => false,
     ];
     return $u;
 }
@@ -220,10 +221,21 @@ function _phpbb_user_from_session(string $phpbb_path): ?array {
         if (!$row) return null;
         $uid = (int)$row['session_user_id'];
         if ($uid <= 1) return null; // phpBB ANONYMOUS
+        // Check phpBB Administrators group membership.
+        $tbl_ug = $table_prefix . 'user_group';
+        $tbl_g  = $table_prefix . 'groups';
+        $astmt  = $pdo->prepare(
+            "SELECT COUNT(*) FROM `{$tbl_ug}` ug
+             INNER JOIN `{$tbl_g}` g ON g.group_id = ug.group_id
+             WHERE ug.user_id = ? AND g.group_name = 'ADMINISTRATORS' AND ug.user_pending = 0"
+        );
+        $astmt->execute([$uid]);
+        $is_admin = ((int)$astmt->fetchColumn()) > 0;
         return [
             'id'       => $uid,
             'name'     => $row['username'],
             'is_guest' => false,
+            'is_admin' => $is_admin,
         ];
     } catch (\Exception $e) {
         // DB error or session not found — fall through to dev fallback
@@ -297,7 +309,10 @@ function save_user_notes(string $notes): bool {
  *   type_ids  — array of type id ints
  * Ordered by created_at ASC.
  */
-function get_verse_notes(string $book_code, int $chapter, int $verse): array {
+function get_verse_notes(string $book_code, int $chapter, int $verse, array $user = []): array {
+    // Notes are private: guests see nothing; logged-in users see only their own;
+    // admins see all notes for the verse.
+    if (!empty($user['is_guest']) || (empty($user['id']) && empty($user['is_admin']))) return [];
     if (should_use_remote_api()) {
         $data = remote_verse_notes($book_code, $chapter, $verse);
         if (is_array($data)) {
@@ -307,7 +322,8 @@ function get_verse_notes(string $book_code, int $chapter, int $verse): array {
     }
     try {
         $pdo = bible_pdo();
-        $stmt = $pdo->prepare("
+        $is_admin = !empty($user['is_admin']);
+        $sql = "
             SELECT vn.id, vn.user_id, vn.username, vn.title, vn.note_text,
                    vn.gem_std, vn.gem_ord, vn.gem_red, vn.created_at, vn.updated_at,
                    GROUP_CONCAT(nt.name  ORDER BY nt.id SEPARATOR ',') AS types_csv,
@@ -316,10 +332,15 @@ function get_verse_notes(string $book_code, int $chapter, int $verse): array {
             LEFT JOIN verse_note_types vnt ON vnt.note_id = vn.id
             LEFT JOIN note_type nt ON nt.id = vnt.type_id
             WHERE vn.book_code = ? AND vn.chapter = ? AND vn.verse = ?
-            GROUP BY vn.id
-            ORDER BY vn.created_at ASC
-        ");
-        $stmt->execute([$book_code, $chapter, $verse]);
+        ";
+        $params = [$book_code, $chapter, $verse];
+        if (!$is_admin) {
+            $sql .= ' AND vn.user_id = ?';
+            $params[] = (int)$user['id'];
+        }
+        $sql .= ' GROUP BY vn.id ORDER BY vn.created_at ASC';
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
         $rows = $stmt->fetchAll();
         foreach ($rows as &$row) {
             $row['types']    = $row['types_csv']    ? explode(',', $row['types_csv'])    : ['General'];
@@ -453,8 +474,14 @@ function delete_verse_note(int $note_id, array $user): bool {
     }
     try {
         $pdo = bible_pdo();
-        $stmt = $pdo->prepare("DELETE FROM verse_notes WHERE id = ? AND user_id = ?");
-        $stmt->execute([$note_id, $user['id']]);
+        if (!empty($user['is_admin'])) {
+            // Admins can delete any note.
+            $stmt = $pdo->prepare('DELETE FROM verse_notes WHERE id = ?');
+            $stmt->execute([$note_id]);
+        } else {
+            $stmt = $pdo->prepare('DELETE FROM verse_notes WHERE id = ? AND user_id = ?');
+            $stmt->execute([$note_id, $user['id']]);
+        }
         return $stmt->rowCount() > 0;
     } catch (Throwable $e) {
         error_log('delete_verse_note error: ' . $e->getMessage());

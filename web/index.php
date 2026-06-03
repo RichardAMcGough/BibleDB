@@ -668,6 +668,7 @@ const CURRENT_USER_ID = <?= json_encode((int)$user['id']) ?>;
 const CURRENT_USER_NAME = <?= json_encode($user['name']) ?>;
 const CSRF_TOKEN = <?= json_encode(get_csrf_token()) ?>;
 const NOTES_CAN_WRITE = <?= json_encode(!$user['is_guest']) ?>;
+const NOTES_IS_ADMIN  = <?= json_encode(!empty($user['is_admin'])) ?>;
 </script>
 
 <script>
@@ -720,7 +721,7 @@ const NOTES_CAN_WRITE = <?= json_encode(!$user['is_guest']) ?>;
     function renderNotesList(notes) {
         listEl.innerHTML = '';
         if (!notes || notes.length === 0) {
-            listEl.innerHTML = '<em>No notes yet for this verse. Be the first to contribute!</em>';
+            listEl.innerHTML = '<em>No notes yet for this verse.</em>';
             return;
         }
         notes.forEach(n => {
@@ -734,6 +735,7 @@ const NOTES_CAN_WRITE = <?= json_encode(!$user['is_guest']) ?>;
             ).join(' ');
             const gemNote = (n.type_ids && n.type_ids.includes(4)) ? ' [gematria ' + (n.gem_std || 0) + ']' : '';
             const isMine = parseInt(n.user_id || 0) === CURRENT_USER_ID;
+            const canDelete = isMine || NOTES_IS_ADMIN;
 
             // Title line: title · type tags · by user · date · [Edit] [Delete]
             const titleEl = document.createElement('div');
@@ -751,7 +753,8 @@ const NOTES_CAN_WRITE = <?= json_encode(!$user['is_guest']) ?>;
                 eb.className = 'note-action-btn';
                 eb.onclick = () => loadNoteForEdit(n);
                 titleEl.appendChild(eb);
-
+            }
+            if (canDelete) {
                 const db = document.createElement('button');
                 db.type = 'button';
                 db.textContent = 'Delete';
