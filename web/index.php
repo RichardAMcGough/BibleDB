@@ -67,6 +67,12 @@ $view_counts = record_verse_view($book_code, (int)$chapter, (int)$verse);
 
 // Current user for notes (phpBB or dev fallback). Needed for edit ownership.
 $user = get_bible_user();
+// Build a login URL for the guest prompt (falls back gracefully when phpbb_url is not configured).
+$_idx_cfg = file_exists(__DIR__ . '/config.php') ? require __DIR__ . '/config.php' : [];
+$_notes_login_url = !empty($_idx_cfg['phpbb_url'])
+    ? rtrim($_idx_cfg['phpbb_url'], '/') . '/ucp.php?mode=login'
+    : '';
+unset($_idx_cfg);
 
 // Edition dropdown. OT Hebrew books get BHS + LXX-Rahlfs; NT + LXX books
 // get NA28 + TR + LXX-Rahlfs. LXX-Rahlfs is a mode switch that routes
@@ -472,10 +478,21 @@ if ($actual_count > 0) {
             <div class="notes-modal-head">
                 <h3 id="notes-modal-title">Notes for <span id="notes-verse-ref"></span></h3>
                 <div class="notes-head-actions">
+                    <?php if (!$user['is_guest']): ?>
                     <button type="button" id="notes-add-btn" class="notes-add-btn">+ Add Note</button>
+                    <?php endif; ?>
                     <button type="button" id="notes-modal-close" class="notes-close">×</button>
                 </div>
             </div>
+            <?php if ($user['is_guest']): ?>
+            <p class="notes-guest-msg"><?php
+                if ($_notes_login_url) {
+                    echo '<a href="' . htmlspecialchars($_notes_login_url, ENT_QUOTES, 'UTF-8') . '">Log in</a> to add or edit notes.';
+                } else {
+                    echo 'Log in to add or edit notes.';
+                }
+            ?></p>
+            <?php else: ?>
             <div id="notes-form-wrap">
             <form id="notes-form" name="notesform">
                 <input type="hidden" id="notes-book">
@@ -507,6 +524,7 @@ if ($actual_count > 0) {
                 </div>
             </form>
             </div><!-- /notes-form-wrap -->
+            <?php endif; ?>
             <div id="notes-existing">
                 <h4>Existing notes for this verse</h4>
                 <div id="notes-list"></div>
@@ -543,6 +561,7 @@ if ($actual_count > 0) {
 .notes-head-actions { display: flex; align-items: center; gap: 6px; }
 .notes-add-btn { font-size: 12px; padding: 3px 10px; cursor: pointer; }
 #notes-form-wrap[hidden] { display: none !important; }
+.notes-guest-msg { margin: 6px 0 2px; font-size: 12px; color: #666; }
 #notes-form label { display: block; margin: 6px 0 2px; font-size: 11px; }
 /* The blanket `select` rule must exclude .abbc3-size-sel, otherwise
    `width:100%` overrides the toolbar's `width:auto` and stretches the
@@ -649,6 +668,7 @@ const VERSE_REF  = <?= json_encode($range_ref_str) ?>;
 const CURRENT_USER_ID = <?= json_encode((int)$user['id']) ?>;
 const CURRENT_USER_NAME = <?= json_encode($user['name']) ?>;
 const CSRF_TOKEN = <?= json_encode(get_csrf_token()) ?>;
+const NOTES_CAN_WRITE = <?= json_encode(!$user['is_guest']) ?>;
 </script>
 
 <script>
@@ -855,7 +875,7 @@ const CSRF_TOKEN = <?= json_encode(get_csrf_token()) ?>;
             .then(notes => {
                 renderNotesList(notes || []);
                 // No notes yet — open form immediately so the user can add one
-                if (!notes || notes.length === 0) showForm();
+                if ((!notes || notes.length === 0) && NOTES_CAN_WRITE) showForm();
             })
             .catch(() => { listEl.innerHTML = '<em>Could not load notes.</em>'; });
     }
