@@ -707,7 +707,8 @@ const NOTES_CAN_WRITE = <?= json_encode(!$user['is_guest']) ?>;
         typeCbs.forEach(cb => { cb.checked = false; });
         if (!types || types.length === 0) {
             // Default to General
-            document.querySelector('.notes-type-cb[value="1"]').checked = true;
+            const defCb = document.querySelector('.notes-type-cb[value="1"]');
+            if (defCb) defCb.checked = true;
             return;
         }
         // types is array of IDs (numbers) from server, e.g. [1, 4]
@@ -793,13 +794,14 @@ const NOTES_CAN_WRITE = <?= json_encode(!$user['is_guest']) ?>;
 
     function startNewNote() {
         editingNoteId = null;
+        if (!form) return; // guest: form not rendered, nothing to reset
         setCheckedTypes([1]); // default to General
         document.getElementById('notes-title').value = '';
         document.getElementById('notes-text').value = '';
         document.getElementById('notes-gem-std').value = '';
         document.getElementById('notes-gem-ord').value = '';
         document.getElementById('notes-gem-red').value = '';
-        gemSec.hidden = true;
+        if (gemSec) gemSec.hidden = true;
         const subBtn = document.getElementById('notes-submit');
         if (subBtn) subBtn.textContent = 'Save Note';
         const cnb = document.getElementById('notes-create-new');
@@ -860,10 +862,12 @@ const NOTES_CAN_WRITE = <?= json_encode(!$user['is_guest']) ?>;
         const bookOpt = document.querySelector('#sel-book option[value="' + book + '"]');
         const longName = (bookOpt && bookOpt.dataset.full) ? bookOpt.dataset.full : book;
         document.getElementById('notes-verse-ref').textContent = longName + ' ' + ch + ':' + vs;
-        document.getElementById('notes-book').value = book;
-        document.getElementById('notes-chapter').value = ch;
-        document.getElementById('notes-verse').value = vs;
-        startNewNote(); // reset form to clean state
+        if (form) {
+            document.getElementById('notes-book').value = book;
+            document.getElementById('notes-chapter').value = ch;
+            document.getElementById('notes-verse').value = vs;
+        }
+        startNewNote(); // reset form to clean state (no-op for guests)
         hideForm();     // hide form; shown automatically if no existing notes, or on Add/Edit click
         listEl.innerHTML = '<em>Loading...</em>';
         modal.hidden = false;
