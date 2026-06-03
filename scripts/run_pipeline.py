@@ -326,7 +326,7 @@ def preflight(db_name: str, cfg_path: Path, args, log, dry_run: bool = False, db
 # ---------------------------------------------------------------------------
 
 def ensure_schema_migrations(cfg: dict, log) -> bool:
-    """Apply versioned schema migrations tracked in the db_migrations table.
+    """Apply versioned schema migrations tracked in the db_versions table.
 
     Each migration runs exactly once. On the first run against a database that
     pre-dates this versioning system, every migration still performs its own
@@ -349,14 +349,14 @@ def ensure_schema_migrations(cfg: dict, log) -> bool:
 
         # ── Tracking table ────────────────────────────────────────────────────
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS db_migrations (
+            CREATE TABLE IF NOT EXISTS db_versions (
                 version     SMALLINT UNSIGNED NOT NULL PRIMARY KEY,
                 name        VARCHAR(120) NOT NULL,
                 applied_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         """)
         conn.commit()
-        cur.execute("SELECT version FROM db_migrations")
+        cur.execute("SELECT version FROM db_versions")
         applied = {row[0] for row in cur.fetchall()}
 
         def run(version: int, name: str, fn):
@@ -366,7 +366,7 @@ def ensure_schema_migrations(cfg: dict, log) -> bool:
             log(f"  ┄ [{version:02d}] {name} ...")
             fn()
             cur.execute(
-                "INSERT IGNORE INTO db_migrations (version, name) VALUES (%s, %s)",
+                "INSERT IGNORE INTO db_versions (version, name) VALUES (%s, %s)",
                 (version, name),
             )
             conn.commit()

@@ -331,11 +331,11 @@ CREATE TABLE IF NOT EXISTS user_notes (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ---------------------------------------------------------------------
--- db_migrations: tracks which versioned schema migrations have been applied.
+-- db_versions: tracks which versioned schema migrations have been applied.
 -- Each migration runs exactly once (version is the primary key).
 -- update_schema.py and run_pipeline.py both use this table.
 -- ---------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS db_migrations (
+CREATE TABLE IF NOT EXISTS db_versions (
     version     SMALLINT UNSIGNED NOT NULL PRIMARY KEY,
     name        VARCHAR(120) NOT NULL,
     applied_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
