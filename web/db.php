@@ -125,7 +125,12 @@ function get_bible_user(): array {
 
     $phpbb_path = rtrim($cfg['phpbb_path'] ?? '', '/\\');
     if ($phpbb_path !== '') {
-        $phpbb_path .= '/';
+        // Resolve relative paths against the web/ directory so config values
+        // like '../../phpbb' or '../forum' work without needing absolute paths.
+        if ($phpbb_path[0] !== '/' && !(strlen($phpbb_path) > 1 && $phpbb_path[1] === ':')) {
+            $phpbb_path = __DIR__ . '/' . $phpbb_path;
+        }
+        $phpbb_path = rtrim($phpbb_path, '/\\') . '/';
     }
 
     if ($phpbb_path && file_exists($phpbb_path . 'common.php')) {
@@ -138,7 +143,14 @@ function get_bible_user(): array {
         $phpEx = 'php';
         // Include only if not already bootstrapped by an outer header.
         if (!isset($user) || !is_object($user) || !method_exists($user, 'session_begin')) {
+            // phpBB's DI container resolves its own internal paths relative to
+            // the current working directory. chdir() to the phpBB root before
+            // bootstrapping so the cache container doesn't fail with
+            // "Call to a member function getParameter() on null".
+            $prev_cwd = getcwd();
+            chdir($phpbb_path);
             require $phpbb_root_path . 'common.php';
+            chdir($prev_cwd);
         }
         if (isset($user) && method_exists($user, 'session_begin')) {
             $user->session_begin();
