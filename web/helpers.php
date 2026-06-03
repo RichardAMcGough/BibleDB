@@ -109,12 +109,22 @@ function bible_render_user_badge(bool $inflow = true): void {
         $cfg = file_exists($cfg_path) ? require $cfg_path : [];
     }
     $phpbb_path = trim($cfg['phpbb_path'] ?? '');
+    $phpbb_url  = trim($cfg['phpbb_url']  ?? '');
     $force_show = !empty($cfg['show_user_badge']);
     // If phpBB is not configured we'd show the generic dev user — suppress unless explicitly enabled.
     if ($phpbb_path === '' && !$force_show) return;
 
     $user = get_bible_user();
-    if ($user['is_guest']) return; // not logged in — don't show badge
+    $cls_fixed = $inflow ? '' : ' bible-user-badge--fixed';
+    if ($user['is_guest']) {
+        // Show a "Log in" link when phpBB URL is known; otherwise nothing.
+        if ($phpbb_url === '') return;
+        $login_url = htmlspecialchars(rtrim($phpbb_url, '/') . '/ucp.php?mode=login', ENT_QUOTES, 'UTF-8');
+        echo '<div class="bible-user-badge bible-user-badge--guest' . $cls_fixed . '">';
+        echo '<a href="' . $login_url . '">Log in</a>';
+        echo '</div>';
+        return;
+    }
     $name = htmlspecialchars($user['name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
     $is_dev = ((int)$user['id'] === 999999);
     $cls = 'bible-user-badge';
