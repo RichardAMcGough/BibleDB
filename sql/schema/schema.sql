@@ -23,15 +23,21 @@
 --   word_link             – grammatical conjoin arrows (word → target word in same verse)
 --   variant               – one row per textual variant reading
 --   variant_edition       – many-to-many: variant ↔ editions supporting it
+--
+-- NOTE: Run this against an already-selected database. No CREATE DATABASE
+-- or USE statement is included — the target DB name varies per environment
+-- (e.g. 'stepbible' locally, 'biblewhe_stepbible' on production).
 -- =====================================================================
 
-CREATE DATABASE IF NOT EXISTS stepbible
-    CHARACTER SET utf8mb4
-    COLLATE utf8mb4_unicode_ci;
+-- Disable FK checks so drop order doesn't matter.
+SET FOREIGN_KEY_CHECKS = 0;
 
-USE stepbible;
+-- Drop pipeline-created tables that reference core tables first.
+DROP TABLE IF EXISTS gematria_word;
+DROP TABLE IF EXISTS gematria_verse;
+DROP TABLE IF EXISTS edition_verse_text;
 
--- Drop in dependency-safe order so the script is fully re-runnable.
+-- Drop core tables.
 DROP VIEW  IF EXISTS v_verse;
 DROP TABLE IF EXISTS variant_edition;
 DROP TABLE IF EXISTS variant;
@@ -318,10 +324,21 @@ JOIN book  b ON b.id = v.book_id;
 -- For standalone/dev use a dev fallback (session based) is provided.
 -- One row per user (the user's entire notebook as one rich text document).
 -- ---------------------------------------------------------------------
-CREATE TABLE user_notes (
+CREATE TABLE IF NOT EXISTS user_notes (
     user_id      INT UNSIGNED NOT NULL PRIMARY KEY,
     notes        TEXT NULL,
     updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------
+-- db_migrations: tracks which versioned schema migrations have been applied.
+-- Each migration runs exactly once (version is the primary key).
+-- update_schema.py and run_pipeline.py both use this table.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS db_migrations (
+    version     SMALLINT UNSIGNED NOT NULL PRIMARY KEY,
+    name        VARCHAR(120) NOT NULL,
+    applied_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ---------------------------------------------------------------------
@@ -339,8 +356,10 @@ CREATE TABLE user_notes (
 -- is_public=1: visible to all visitors; is_public=0: private (owner + admins only).
 -- Admins default to public (can opt out); non-admins always private.
 -- All notes are verse-scoped; the old user_notes free-text scratchpad is retired.
+-- NOTE: verse_notes is intentionally NOT in the DROP TABLE block above so that
+-- running this file on an existing DB does not destroy user content.
 -- ---------------------------------------------------------------------
-CREATE TABLE verse_notes (
+CREATE TABLE IF NOT EXISTS verse_notes (
     id           INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
     user_id      INT UNSIGNED NOT NULL,
     username     VARCHAR(100) NOT NULL,
@@ -372,7 +391,7 @@ CREATE TABLE note_type (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Seed the four standard types.
-INSERT INTO note_type (id, name, label) VALUES
+INSERT IGNORE INTO note_type (id, name, label) VALUES
     (1, 'General',  'General (commentary)'),
     (2, 'BW',       'Bible Wheel'),
     (3, 'IBC',      'Isaiah-Bible Correlation'),
@@ -391,3 +410,5 @@ CREATE TABLE verse_note_types (
     CONSTRAINT fk_vnt_note FOREIGN KEY (note_id) REFERENCES verse_notes (id) ON DELETE CASCADE,
     CONSTRAINT fk_vnt_type FOREIGN KEY (type_id) REFERENCES note_type (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+SET FOREIGN_KEY_CHECKS = 1;

@@ -45,7 +45,9 @@ STEP and everything after to run; everything before is treated as done).
 Self-healing schema migrations run every invocation (idempotent). Ensures:
 variant.position column, verse_views table + record_verse_view proc (for
 view counters), GetGematriaWords proc (for local gematria searches),
-user_notes table (for per-user BBCode notes / personal notebook), verse_notes table (collaborative per-verse commentary + gematria notes).
+verse_notes / note_type / verse_note_types tables (collaborative per-verse
+commentary with public/private visibility flag). See scripts/update_schema.py
+to run migrations standalone against an existing production server.
 
 After a successful run, the script prints a reminder to sync web/config.php
 'database' key (and use_remote_api=false) so the browser UI is not blank/empty.
@@ -324,14 +326,19 @@ def preflight(db_name: str, cfg_path: Path, args, log, dry_run: bool = False, db
 # ---------------------------------------------------------------------------
 
 def ensure_schema_migrations(cfg: dict, log) -> bool:
-    """Apply idempotent schema migrations on top of the current DB.
-    Handles: variant.position, verse_views table + record_verse_view proc,
-    GetGematriaWords proc (for local gematria search), user_notes table
-    (for per-user formatted notes), plus self-heal of word.strongs_primary
-    for compound tags so gematria results show the correct (lexical) Strong's number.
-    Returns True on success."""
+    """Apply versioned schema migrations tracked in the db_migrations table.
+
+    Each migration runs exactly once. On the first run against a database that
+    pre-dates this versioning system, every migration still performs its own
+    information_schema guard so it is safe to bootstrap against any existing DB.
+    After that first run all migrations are skipped in O(1) via the version table.
+
+    To add a new migration: append a (version, name, fn) tuple to _MIGRATIONS
+    below. The version must be a unique integer larger than all existing ones.
+    Returns True on success.
+    """
     from _db import get_connection
-    log("Schema migrations (idempotent)...")
+    log("Schema migrations...")
     try:
         conn, _ = get_connection(cfg)
     except Exception as e:
@@ -340,119 +347,143 @@ def ensure_schema_migrations(cfg: dict, log) -> bool:
     try:
         cur = conn.cursor()
 
-        cur.execute(
-            "SELECT COUNT(*) FROM information_schema.COLUMNS "
-            " WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'variant' "
-            "   AND COLUMN_NAME = 'position'",
-            (cfg["database"],),
-        )
-        has_position = (cur.fetchone()[0] or 0) > 0
+        # ── Tracking table ────────────────────────────────────────────────────
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS db_migrations (
+                version     SMALLINT UNSIGNED NOT NULL PRIMARY KEY,
+                name        VARCHAR(120) NOT NULL,
+                applied_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        """)
+        conn.commit()
+        cur.execute("SELECT version FROM db_migrations")
+        applied = {row[0] for row in cur.fetchall()}
 
-        if not has_position:
-            log("  - variant.position column missing — adding now ...")
-            cur.execute("ALTER TABLE variant ADD COLUMN position DECIMAL(6,2) NOT NULL DEFAULT 0")
-            cur.execute("ALTER TABLE variant ADD KEY idx_variant_position (word_id, position)")
-            cur.execute("UPDATE variant v JOIN word w ON w.id = v.word_id SET v.position = w.position")
-            conn.commit()
-            log(f"    ✓ added variant.position + index; backfilled "
-                f"{cur.rowcount:,} variant row(s) from word.position.")
-        else:
+        def run(version: int, name: str, fn):
+            if version in applied:
+                log(f"  ✓ [{version:02d}] {name}")
+                return
+            log(f"  ┄ [{version:02d}] {name} ...")
+            fn()
             cur.execute(
-                "SELECT COUNT(*) FROM variant v "
-                " WHERE v.position = 0 "
-                "   AND EXISTS (SELECT 1 FROM word w WHERE w.id = v.word_id AND w.position > 0)"
+                "INSERT IGNORE INTO db_migrations (version, name) VALUES (%s, %s)",
+                (version, name),
             )
-            unset = cur.fetchone()[0] or 0
-            if unset > 0:
-                log(f"  - variant.position present but {unset:,} row(s) "
-                    f"still at DEFAULT 0 — backfilling ...")
-                cur.execute(
-                    "UPDATE variant v JOIN word w ON w.id = v.word_id "
-                    "  SET v.position = w.position WHERE v.position = 0"
-                )
+            conn.commit()
+
+        # ── 01: variant.position ─────────────────────────────────────────────
+        def m01():
+            # Guard: skip on fresh DBs where core tables don't exist yet.
+            cur.execute(
+                "SELECT COUNT(*) FROM information_schema.TABLES "
+                " WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'variant'",
+                (cfg["database"],),
+            )
+            if (cur.fetchone()[0] or 0) == 0:
+                log("    variant table not yet created — skipping (fresh DB)")
+                return
+            cur.execute(
+                "SELECT COUNT(*) FROM information_schema.COLUMNS "
+                " WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'variant' AND COLUMN_NAME = 'position'",
+                (cfg["database"],),
+            )
+            if (cur.fetchone()[0] or 0) == 0:
+                log("    adding variant.position column + index ...")
+                cur.execute("ALTER TABLE variant ADD COLUMN position DECIMAL(6,2) NOT NULL DEFAULT 0")
+                cur.execute("ALTER TABLE variant ADD KEY idx_variant_position (word_id, position)")
+                cur.execute("UPDATE variant v JOIN word w ON w.id = v.word_id SET v.position = w.position")
                 conn.commit()
-                log(f"    ✓ backfilled {cur.rowcount:,} variant row(s).")
+                log(f"    backfilled {cur.rowcount:,} rows")
             else:
-                log("  ✓ variant.position already present and populated.")
+                cur.execute(
+                    "SELECT COUNT(*) FROM variant v "
+                    " WHERE v.position = 0 "
+                    "   AND EXISTS (SELECT 1 FROM word w WHERE w.id = v.word_id AND w.position > 0)"
+                )
+                unset = cur.fetchone()[0] or 0
+                if unset > 0:
+                    log(f"    backfilling {unset:,} rows with position=0 ...")
+                    cur.execute(
+                        "UPDATE variant v JOIN word w ON w.id = v.word_id "
+                        "  SET v.position = w.position WHERE v.position = 0"
+                    )
+                    conn.commit()
+        run(1, "variant_position", m01)
 
-        # Ensure verse_views table (for page view counters in index/stats/api)
-        cur.execute(
-            "SELECT COUNT(*) FROM information_schema.TABLES "
-            " WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'verse_views'",
-            (cfg["database"],),
-        )
-        has_views = (cur.fetchone()[0] or 0) > 0
-        if not has_views:
-            log("  - verse_views table missing — creating ...")
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS verse_views (
-                    book_code  VARCHAR(10) NOT NULL,
-                    chapter    INT NOT NULL,
-                    verse      INT NOT NULL,
-                    view_count INT NOT NULL DEFAULT 0,
-                    PRIMARY KEY (book_code, chapter, verse)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            """)
-            conn.commit()
-            log("    ✓ created verse_views table")
+        # ── 02: verse_views table ────────────────────────────────────────────
+        def m02():
+            cur.execute(
+                "SELECT COUNT(*) FROM information_schema.TABLES "
+                " WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'verse_views'",
+                (cfg["database"],),
+            )
+            if (cur.fetchone()[0] or 0) == 0:
+                log("    creating verse_views ...")
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS verse_views (
+                        book_code  VARCHAR(10) NOT NULL,
+                        chapter    INT NOT NULL,
+                        verse      INT NOT NULL,
+                        view_count INT NOT NULL DEFAULT 0,
+                        PRIMARY KEY (book_code, chapter, verse)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """)
+                conn.commit()
+        run(2, "verse_views_table", m02)
 
-        # Ensure user_notes table (per-user BBCode-formatted personal notes / notebook)
-        cur.execute(
-            "SELECT COUNT(*) FROM information_schema.TABLES "
-            " WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'user_notes'",
-            (cfg["database"],),
-        )
-        has_notes = (cur.fetchone()[0] or 0) > 0
-        if not has_notes:
-            log("  - user_notes table missing — creating ...")
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS user_notes (
-                    user_id      INT UNSIGNED NOT NULL PRIMARY KEY,
-                    notes        TEXT NULL,
-                    updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            """)
-            conn.commit()
-            log("    ✓ created user_notes table")
+        # ── 03: user_notes table ─────────────────────────────────────────────
+        def m03():
+            cur.execute(
+                "SELECT COUNT(*) FROM information_schema.TABLES "
+                " WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'user_notes'",
+                (cfg["database"],),
+            )
+            if (cur.fetchone()[0] or 0) == 0:
+                log("    creating user_notes ...")
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS user_notes (
+                        user_id    INT UNSIGNED NOT NULL PRIMARY KEY,
+                        notes      TEXT NULL,
+                        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """)
+                conn.commit()
+        run(3, "user_notes_table", m03)
 
-        # Ensure verse_notes table for collaborative per-verse commentary notes.
-        # Multiple notes per verse (distinguished by required title, e.g. for different
-        # word ranges like 913 vs 703); public to all. Supports gematria-type notes.
-        # Title column is enforced NOT NULL via create + migration.
-        cur.execute(
-            "SELECT COUNT(*) FROM information_schema.TABLES "
-            " WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'verse_notes'",
-            (cfg["database"],),
-        )
-        has_vnotes = (cur.fetchone()[0] or 0) > 0
-        if not has_vnotes:
-            log("  - verse_notes table missing — creating ...")
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS verse_notes (
-                    id           INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                    user_id      INT UNSIGNED NOT NULL,
-                    username     VARCHAR(100) NOT NULL,
-                    book_code    VARCHAR(10) NOT NULL,
-                    chapter      SMALLINT UNSIGNED NOT NULL,
-                    verse        SMALLINT UNSIGNED NOT NULL,
-                    note_type    ENUM('general','gematria') NOT NULL DEFAULT 'general',
-                    title        VARCHAR(255) NOT NULL,
-                    note_text    TEXT NOT NULL,
-                    gem_std      INT NULL,
-                    gem_ord      INT NULL,
-                    gem_red      INT NULL,
-                    created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                    KEY idx_vn_verse (book_code, chapter, verse),
-                    KEY idx_vn_user (user_id)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            """)
-            conn.commit()
-            log("    ✓ created verse_notes table")
+        # ── 04: verse_notes table (initial creation with legacy note_type ENUM) ──
+        def m04():
+            cur.execute(
+                "SELECT COUNT(*) FROM information_schema.TABLES "
+                " WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'verse_notes'",
+                (cfg["database"],),
+            )
+            if (cur.fetchone()[0] or 0) == 0:
+                log("    creating verse_notes ...")
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS verse_notes (
+                        id         INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                        user_id    INT UNSIGNED NOT NULL,
+                        username   VARCHAR(100) NOT NULL,
+                        book_code  VARCHAR(10) NOT NULL,
+                        chapter    SMALLINT UNSIGNED NOT NULL,
+                        verse      SMALLINT UNSIGNED NOT NULL,
+                        note_type  ENUM('general','gematria') NOT NULL DEFAULT 'general',
+                        title      VARCHAR(255) NOT NULL,
+                        note_text  TEXT NOT NULL,
+                        gem_std    INT NULL,
+                        gem_ord    INT NULL,
+                        gem_red    INT NULL,
+                        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                        KEY idx_vn_verse (book_code, chapter, verse),
+                        KEY idx_vn_user (user_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """)
+                conn.commit()
+        run(4, "verse_notes_table", m04)
 
-        # Ensure title is NOT NULL (required). Migrate existing installs where it was nullable.
-        # Any legacy rows with empty title get a placeholder using their id (user can edit later).
-        try:
+        # ── 05: verse_notes.title NOT NULL ───────────────────────────────────
+        def m05():
             cur.execute(
                 "SELECT IS_NULLABLE FROM information_schema.COLUMNS "
                 " WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'verse_notes' AND COLUMN_NAME = 'title'",
@@ -460,200 +491,172 @@ def ensure_schema_migrations(cfg: dict, log) -> bool:
             )
             row = cur.fetchone()
             if row and (row[0] or '').upper() == 'YES':
-                log("  - migrating verse_notes.title to NOT NULL (required to distinguish notes for same verse, e.g. 913 vs 703)...")
+                log("    filling blank titles then enforcing NOT NULL ...")
                 cur.execute(
-                    "UPDATE verse_notes SET title = CONCAT('Note ', id) "
-                    " WHERE title IS NULL OR title = ''"
+                    "UPDATE verse_notes SET title = CONCAT('Note ', id) WHERE title IS NULL OR title = ''"
                 )
-                cur.execute(
-                    "ALTER TABLE verse_notes MODIFY COLUMN title VARCHAR(255) NOT NULL"
-                )
+                cur.execute("ALTER TABLE verse_notes MODIFY COLUMN title VARCHAR(255) NOT NULL")
                 conn.commit()
-                log("    ✓ title column is now NOT NULL")
-        except Exception as e:
-            log("    ! verse_notes title migration skipped/partial: " + str(e))
+        run(5, "verse_notes_title_not_null", m05)
 
-        # Ensure is_public column exists (added when notes became public/private).
-        try:
+        # ── 06: note_type lookup table + seeds ───────────────────────────────
+        def m06():
+            cur.execute(
+                "SELECT COUNT(*) FROM information_schema.TABLES "
+                " WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'note_type'",
+                (cfg["database"],),
+            )
+            if (cur.fetchone()[0] or 0) == 0:
+                log("    creating note_type ...")
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS note_type (
+                        id    TINYINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                        name  VARCHAR(30) NOT NULL,
+                        label VARCHAR(80) NOT NULL,
+                        UNIQUE KEY uq_note_type_name (name)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """)
+            cur.execute("""
+                INSERT IGNORE INTO note_type (id, name, label) VALUES
+                    (1, 'General',  'General (commentary)'),
+                    (2, 'BW',       'Bible Wheel'),
+                    (3, 'IBC',      'Isaiah-Bible Correlation'),
+                    (4, 'Gematria', 'Gematria')
+            """)
+            conn.commit()
+        run(6, "note_type_table", m06)
+
+        # ── 07: verse_note_types junction table ──────────────────────────────
+        def m07():
+            cur.execute(
+                "SELECT COUNT(*) FROM information_schema.TABLES "
+                " WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'verse_note_types'",
+                (cfg["database"],),
+            )
+            if (cur.fetchone()[0] or 0) == 0:
+                log("    creating verse_note_types ...")
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS verse_note_types (
+                        note_id INT UNSIGNED NOT NULL,
+                        type_id TINYINT UNSIGNED NOT NULL,
+                        PRIMARY KEY (note_id, type_id),
+                        KEY idx_vnt_type (type_id),
+                        CONSTRAINT fk_vnt_note FOREIGN KEY (note_id) REFERENCES verse_notes (id) ON DELETE CASCADE,
+                        CONSTRAINT fk_vnt_type FOREIGN KEY (type_id) REFERENCES note_type (id) ON DELETE CASCADE
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """)
+                conn.commit()
+        run(7, "verse_note_types_junction", m07)
+
+        # ── 08: verse_notes.note_type ENUM → junction rows, then drop column ─
+        def m08():
+            cur.execute(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                " WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'verse_notes' AND COLUMN_NAME = 'note_type'",
+                (cfg["database"],),
+            )
+            if cur.fetchone():
+                log("    migrating note_type ENUM to junction rows ...")
+                cur.execute("""
+                    INSERT IGNORE INTO verse_note_types (note_id, type_id)
+                    SELECT vn.id, nt.id FROM verse_notes vn
+                    JOIN note_type nt ON (
+                        (vn.note_type = 'general'  AND nt.name = 'General') OR
+                        (vn.note_type = 'gematria' AND nt.name = 'Gematria')
+                    )
+                """)
+                cur.execute("""
+                    INSERT IGNORE INTO verse_note_types (note_id, type_id)
+                    SELECT vn.id, 1 FROM verse_notes vn
+                    WHERE NOT EXISTS (SELECT 1 FROM verse_note_types vnt WHERE vnt.note_id = vn.id)
+                """)
+                cur.execute("ALTER TABLE verse_notes DROP COLUMN note_type")
+                conn.commit()
+        run(8, "verse_notes_enum_to_junction", m08)
+
+        # ── 09: verse_notes.is_public column ─────────────────────────────────
+        def m09():
+            # Guard: skip on fresh DBs where verse_notes doesn't exist yet.
+            cur.execute(
+                "SELECT COUNT(*) FROM information_schema.TABLES "
+                " WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'verse_notes'",
+                (cfg["database"],),
+            )
+            if (cur.fetchone()[0] or 0) == 0:
+                log("    verse_notes table not yet created — skipping (fresh DB)")
+                return
             cur.execute(
                 "SELECT COUNT(*) FROM information_schema.COLUMNS "
                 " WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'verse_notes' AND COLUMN_NAME = 'is_public'",
                 (cfg["database"],),
             )
             if (cur.fetchone()[0] or 0) == 0:
-                log("  - verse_notes.is_public column missing — adding ...")
+                log("    adding verse_notes.is_public ...")
                 cur.execute(
-                    "ALTER TABLE verse_notes ADD COLUMN is_public TINYINT(1) NOT NULL DEFAULT 0"
-                    " AFTER note_text"
+                    "ALTER TABLE verse_notes ADD COLUMN is_public TINYINT(1) NOT NULL DEFAULT 0 AFTER note_text"
                 )
                 conn.commit()
-                log("    ✓ is_public column added")
-        except Exception as e:
-            log("    ! verse_notes is_public migration skipped/partial: " + str(e))
+        run(9, "verse_notes_is_public", m09)
 
-        # ── note_type + verse_note_types (junction-table note classification) ──────
-        # note_type is a tiny lookup table (General, BW, IBC, Gematria).
-        # verse_note_types is the many-to-many junction so one note can carry
-        # multiple type tags (e.g. BW + Gematria).
-        # Migration path: if verse_notes still has the old note_type ENUM column,
-        # copy the existing values into the junction table, then drop the column.
-        cur.execute(
-            "SELECT COUNT(*) FROM information_schema.TABLES "
-            " WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'note_type'",
-            (cfg["database"],),
-        )
-        has_note_type = (cur.fetchone()[0] or 0) > 0
-        if not has_note_type:
-            log("  - note_type table missing — creating and seeding ...")
+        # ── 10: record_verse_view stored procedure ────────────────────────────
+        def m10():
+            log("    creating record_verse_view procedure ...")
+            cur.execute("DROP PROCEDURE IF EXISTS record_verse_view")
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS note_type (
-                    id     TINYINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                    name   VARCHAR(30) NOT NULL,
-                    label  VARCHAR(80) NOT NULL,
-                    UNIQUE KEY uq_note_type_name (name)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            """)
-            # Fixed IDs so PHP code can reference them reliably.
-            cur.execute("""
-                INSERT IGNORE INTO note_type (id, name, label) VALUES
-                    (1, 'General',  'General (commentary)'),
-                    (2, 'BW',       'Bible Wheel'),
-                    (3, 'IBC',      'Isaiah-Bible Correlation'),
-                    (4, 'Gematria', 'Gematria')
+                CREATE PROCEDURE record_verse_view(
+                    IN p_book VARCHAR(20), IN p_chapter INT, IN p_verse INT,
+                    OUT p_verse_count INT, OUT p_total INT
+                )
+                BEGIN
+                    INSERT INTO verse_views (book_code, chapter, verse, view_count)
+                    VALUES (p_book, p_chapter, p_verse, 1)
+                    ON DUPLICATE KEY UPDATE view_count = view_count + 1;
+                    SELECT view_count INTO p_verse_count
+                      FROM verse_views
+                     WHERE book_code = p_book AND chapter = p_chapter AND verse = p_verse;
+                    SELECT COALESCE(SUM(view_count), 0) INTO p_total FROM verse_views;
+                END
             """)
             conn.commit()
-            log("    ✓ note_type table created and seeded")
-        else:
-            # Ensure all four seed rows exist even if table was created earlier.
+        run(10, "record_verse_view_proc", m10)
+
+        # ── 11: GetGematriaWords stored procedure ─────────────────────────────
+        def m11():
+            log("    creating GetGematriaWords procedure ...")
+            cur.execute("DROP PROCEDURE IF EXISTS GetGematriaWords")
             cur.execute("""
-                INSERT IGNORE INTO note_type (id, name, label) VALUES
-                    (1, 'General',  'General (commentary)'),
-                    (2, 'BW',       'Bible Wheel'),
-                    (3, 'IBC',      'Isaiah-Bible Correlation'),
-                    (4, 'Gematria', 'Gematria')
+                CREATE PROCEDURE GetGematriaWords(IN p_val INT)
+                BEGIN
+                    SELECT w.book_id, v.chapter, v.verse,
+                           w.text_search, w.text_original, w.transliteration,
+                           w.translation, w.strongs_primary, w.language
+                    FROM gematria_word gw
+                    JOIN word w ON w.id = gw.word_id
+                    JOIN verse v ON v.id = w.verse_id
+                    WHERE gw.standard = p_val
+                    ORDER BY w.book_id, v.chapter, v.verse, w.position;
+                END
             """)
             conn.commit()
-            log("    ✓ note_type table verified")
+        run(11, "get_gematria_words_proc", m11)
 
-        cur.execute(
-            "SELECT COUNT(*) FROM information_schema.TABLES "
-            " WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'verse_note_types'",
-            (cfg["database"],),
-        )
-        has_vnt = (cur.fetchone()[0] or 0) > 0
-        if not has_vnt:
-            log("  - verse_note_types junction table missing — creating ...")
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS verse_note_types (
-                    note_id  INT UNSIGNED NOT NULL,
-                    type_id  TINYINT UNSIGNED NOT NULL,
-                    PRIMARY KEY (note_id, type_id),
-                    KEY idx_vnt_type (type_id),
-                    CONSTRAINT fk_vnt_note FOREIGN KEY (note_id) REFERENCES verse_notes (id) ON DELETE CASCADE,
-                    CONSTRAINT fk_vnt_type FOREIGN KEY (type_id) REFERENCES note_type (id) ON DELETE CASCADE
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            """)
-            conn.commit()
-            log("    ✓ verse_note_types table created")
-
-        # Migrate old note_type ENUM column → junction rows, then drop it.
-        # This runs once: after the column is gone the check is a no-op.
-        try:
+        # ── 12: strongs_primary lexical-form heal (compound tags) ─────────────
+        # This is the expensive migration (~100k row SELECT + regex + bulk UPDATE).
+        # Versioned so it runs exactly once per database.
+        def m12():
+            # Guard: skip on fresh DBs where word table doesn't exist yet.
             cur.execute(
-                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
-                " WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'verse_notes' "
-                "   AND COLUMN_NAME = 'note_type'",
+                "SELECT COUNT(*) FROM information_schema.TABLES "
+                " WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'word'",
                 (cfg["database"],),
             )
-            if cur.fetchone():
-                log("  - migrating verse_notes.note_type ENUM → verse_note_types junction ...")
-                # Copy 'general' rows → type_id 1 (General), 'gematria' rows → type_id 4 (Gematria).
-                # INSERT IGNORE so re-runs are safe if partially migrated.
-                cur.execute("""
-                    INSERT IGNORE INTO verse_note_types (note_id, type_id)
-                    SELECT vn.id, nt.id
-                    FROM verse_notes vn
-                    JOIN note_type nt ON (
-                        (vn.note_type = 'general'  AND nt.name = 'General') OR
-                        (vn.note_type = 'gematria' AND nt.name = 'Gematria')
-                    )
-                """)
-                # Any notes with no junction row yet get General as default.
-                cur.execute("""
-                    INSERT IGNORE INTO verse_note_types (note_id, type_id)
-                    SELECT vn.id, 1
-                    FROM verse_notes vn
-                    WHERE NOT EXISTS (
-                        SELECT 1 FROM verse_note_types vnt WHERE vnt.note_id = vn.id
-                    )
-                """)
-                cur.execute("ALTER TABLE verse_notes DROP COLUMN note_type")
-                conn.commit()
-                log("    ✓ note_type ENUM migrated and column dropped")
-        except Exception as e:
-            log("    ! note_type migration skipped/partial: " + str(e))
-
-        # Ensure record_verse_view proc (called by index.php record_verse_view etc.)
-        log("  - ensuring record_verse_view procedure ...")
-        cur.execute("DROP PROCEDURE IF EXISTS record_verse_view")
-        cur.execute("""
-            CREATE PROCEDURE record_verse_view(
-                IN p_book VARCHAR(20),
-                IN p_chapter INT,
-                IN p_verse INT,
-                OUT p_verse_count INT,
-                OUT p_total INT
-            )
-            BEGIN
-                INSERT INTO verse_views (book_code, chapter, verse, view_count)
-                VALUES (p_book, p_chapter, p_verse, 1)
-                ON DUPLICATE KEY UPDATE view_count = view_count + 1;
-                SELECT view_count INTO p_verse_count 
-                  FROM verse_views 
-                 WHERE book_code = p_book AND chapter = p_chapter AND verse = p_verse;
-                SELECT COALESCE(SUM(view_count), 0) INTO p_total FROM verse_views;
-            END
-        """)
-        conn.commit()
-        log("    ✓ record_verse_view procedure ensured")
-
-        # Ensure GetGematriaWords proc for local-mode gematria search (?mode=gematria)
-        # (remote mode bypasses this via API proxy)
-        log("  - ensuring GetGematriaWords procedure ...")
-        cur.execute("DROP PROCEDURE IF EXISTS GetGematriaWords")
-        cur.execute("""
-            CREATE PROCEDURE GetGematriaWords(IN p_val INT)
-            BEGIN
-                SELECT 
-                    w.book_id,
-                    v.chapter,
-                    v.verse,
-                    w.text_search,
-                    w.text_original,
-                    w.transliteration,
-                    w.translation,
-                    w.strongs_primary,
-                    w.language
-                FROM gematria_word gw
-                JOIN word w ON w.id = gw.word_id
-                JOIN verse v ON v.id = w.verse_id
-                WHERE gw.standard = p_val
-                ORDER BY w.book_id, v.chapter, v.verse, w.position;
-            END
-        """)
-        conn.commit()
-        log("    ✓ GetGematriaWords procedure ensured")
-
-        # Self-heal strongs_primary for compound dStrongs tags (e.g. H9003/{H7225G}).
-        # Older importer took the first match (the prefix); gematria search (and
-        # strongs_primary consumers) should show the lexical form inside {} .
-        # The parser fix + this healer makes both fresh and pre-existing DBs correct.
-        log("  - ensuring strongs_primary uses lexical form for compound tags (e.g. H9003/{H7225G} -> H7225)...")
-        try:
+            if (cur.fetchone()[0] or 0) == 0:
+                log("    word table not yet created — skipping (fresh DB)")
+                return
+            log("    scanning for compound Strong's tags needing lexical-form fix ...")
             cur.execute(
                 "SELECT id, strongs, strongs_primary FROM word "
-                "WHERE strongs IS NOT NULL AND strongs LIKE '%{%' "
-                "LIMIT 100000"
+                "WHERE strongs IS NOT NULL AND strongs LIKE '%{%' LIMIT 100000"
             )
             fixes = []
             pat = re.compile(r'\{([HG])(\d{3,5})')
@@ -664,16 +667,12 @@ def ensure_schema_migrations(cfg: dict, log) -> bool:
                     if new_p != (old_p or ""):
                         fixes.append((new_p, wid))
             if fixes:
-                cur.executemany(
-                    "UPDATE word SET strongs_primary = %s WHERE id = %s",
-                    fixes
-                )
+                cur.executemany("UPDATE word SET strongs_primary = %s WHERE id = %s", fixes)
                 conn.commit()
-                log(f"    ✓ updated {len(fixes)} rows")
+                log(f"    fixed {len(fixes):,} rows")
             else:
-                log("    ✓ no fixes required")
-        except Exception as e:
-            log(f"    ! strongs_primary heal skipped: {e}")
+                log("    no fixes needed")
+        run(12, "strongs_primary_heal", m12)
 
         return True
     except Exception as e:
@@ -901,6 +900,32 @@ def _flat_index_of(step_name: str) -> Optional[int]:
     return None
 
 
+def _core_data_present(cfg: dict) -> bool:
+    """Return True if the book table exists and has rows (DB has been populated).
+
+    Used to detect a wiped/recreated DB that still has stale log entries, so
+    the pipeline doesn't skip data-import steps on an empty DB.
+    """
+    from _db import get_connection
+    try:
+        conn, _ = get_connection(cfg)
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT COUNT(*) FROM information_schema.TABLES "
+                "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'book'",
+                (cfg["database"],),
+            )
+            if (cur.fetchone()[0] or 0) == 0:
+                return False
+            cur.execute("SELECT COUNT(*) FROM book")
+            return (cur.fetchone()[0] or 0) > 0
+        finally:
+            conn.close()
+    except Exception:
+        return False
+
+
 def run_pipeline(args: argparse.Namespace, log: TeeLogger) -> int:
     db_name = resolve_db_name(args, log)
     cfg_path = Path(args.config)
@@ -937,6 +962,12 @@ def run_pipeline(args: argparse.Namespace, log: TeeLogger) -> int:
         done_set = set()
     else:
         done_set = read_log_state(db_name, log)
+        # Guard: if prior logs mark steps done but the DB has no core data
+        # (book table absent/empty), the DB was wiped or recreated — ignore
+        # the stale log history and treat as a fresh run.
+        if done_set and not _core_data_present(cfg):
+            log("  ⚠  Core data absent despite log history — treating as fresh run.")
+            done_set = set()
 
     # --rerun-from STEP: mark prior steps as done, force STEP and after to run.
     if args.rerun_from:

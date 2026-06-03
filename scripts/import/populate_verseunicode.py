@@ -26,6 +26,7 @@ Run:  python populate_verseunicode.py
 Safe to re-run -- UPDATE is idempotent.
 """
 
+import argparse
 import os
 import re
 import sys
