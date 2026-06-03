@@ -336,7 +336,9 @@ CREATE TABLE user_notes (
 -- verse words or user selection at create time).
 -- username is denormalized at create time for display (since user table
 -- lives in external phpBB).
--- All notes are public / visible to everyone (Bible commentary).
+-- is_public=1: visible to all visitors; is_public=0: private (owner + admins only).
+-- Admins default to public (can opt out); non-admins always private.
+-- All notes are verse-scoped; the old user_notes free-text scratchpad is retired.
 -- ---------------------------------------------------------------------
 CREATE TABLE verse_notes (
     id           INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -347,6 +349,7 @@ CREATE TABLE verse_notes (
     verse        SMALLINT UNSIGNED NOT NULL,
     title        VARCHAR(255) NOT NULL,
     note_text    TEXT NOT NULL,
+    is_public    TINYINT(1) NOT NULL DEFAULT 0,
     gem_std      INT NULL,
     gem_ord      INT NULL,
     gem_red      INT NULL,

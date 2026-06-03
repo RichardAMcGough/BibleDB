@@ -473,6 +473,24 @@ def ensure_schema_migrations(cfg: dict, log) -> bool:
         except Exception as e:
             log("    ! verse_notes title migration skipped/partial: " + str(e))
 
+        # Ensure is_public column exists (added when notes became public/private).
+        try:
+            cur.execute(
+                "SELECT COUNT(*) FROM information_schema.COLUMNS "
+                " WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'verse_notes' AND COLUMN_NAME = 'is_public'",
+                (cfg["database"],),
+            )
+            if (cur.fetchone()[0] or 0) == 0:
+                log("  - verse_notes.is_public column missing — adding ...")
+                cur.execute(
+                    "ALTER TABLE verse_notes ADD COLUMN is_public TINYINT(1) NOT NULL DEFAULT 0"
+                    " AFTER note_text"
+                )
+                conn.commit()
+                log("    ✓ is_public column added")
+        except Exception as e:
+            log("    ! verse_notes is_public migration skipped/partial: " + str(e))
+
         # ── note_type + verse_note_types (junction-table note classification) ──────
         # note_type is a tiny lookup table (General, BW, IBC, Gematria).
         # verse_note_types is the many-to-many junction so one note can carry

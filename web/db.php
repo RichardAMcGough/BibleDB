@@ -310,9 +310,10 @@ function save_user_notes(string $notes): bool {
  * Ordered by created_at ASC.
  */
 function get_verse_notes(string $book_code, int $chapter, int $verse, array $user = []): array {
-    // Notes are private: guests see nothing; logged-in users see only their own;
-    // admins see all notes for the verse.
-    if (!empty($user['is_guest']) || (empty($user['id']) && empty($user['is_admin']))) return [];
+    // Visibility rules:
+    //   guest             → public notes only (is_public = 1)
+    //   logged-in user    → own notes (any) + public notes from others
+    //   admin             → all notes
     if (should_use_remote_api()) {
         $data = remote_verse_notes($book_code, $chapter, $verse);
         if (is_array($data)) {
@@ -323,8 +324,11 @@ function get_verse_notes(string $book_code, int $chapter, int $verse, array $use
     try {
         $pdo = bible_pdo();
         $is_admin = !empty($user['is_admin']);
+        $is_guest = empty($user['id']) || !empty($user['is_guest']);
+        $uid = (int)($user['id'] ?? 0);
+
         $sql = "
-            SELECT vn.id, vn.user_id, vn.username, vn.title, vn.note_text,
+            SELECT vn.id, vn.user_id, vn.username, vn.title, vn.note_text, vn.is_public,
                    vn.gem_std, vn.gem_ord, vn.gem_red, vn.created_at, vn.updated_at,
                    GROUP_CONCAT(nt.name  ORDER BY nt.id SEPARATOR ',') AS types_csv,
                    GROUP_CONCAT(nt.id    ORDER BY nt.id SEPARATOR ',') AS type_ids_csv
@@ -334,17 +338,25 @@ function get_verse_notes(string $book_code, int $chapter, int $verse, array $use
             WHERE vn.book_code = ? AND vn.chapter = ? AND vn.verse = ?
         ";
         $params = [$book_code, $chapter, $verse];
-        if (!$is_admin) {
-            $sql .= ' AND vn.user_id = ?';
-            $params[] = (int)$user['id'];
+
+        if ($is_admin) {
+            // Admins see everything — no extra filter.
+        } elseif ($is_guest) {
+            $sql .= ' AND vn.is_public = 1';
+        } else {
+            // Logged-in non-admin: own notes OR public notes from others.
+            $sql .= ' AND (vn.user_id = ? OR vn.is_public = 1)';
+            $params[] = $uid;
         }
         $sql .= ' GROUP BY vn.id ORDER BY vn.created_at ASC';
+
         $stmt = $pdo->prepare($sql);
         $stmt->execute($params);
         $rows = $stmt->fetchAll();
         foreach ($rows as &$row) {
-            $row['types']    = $row['types_csv']    ? explode(',', $row['types_csv'])    : ['General'];
-            $row['type_ids'] = $row['type_ids_csv'] ? array_map('intval', explode(',', $row['type_ids_csv'])) : [1];
+            $row['types']     = $row['types_csv']    ? explode(',', $row['types_csv'])    : ['General'];
+            $row['type_ids']  = $row['type_ids_csv'] ? array_map('intval', explode(',', $row['type_ids_csv'])) : [1];
+            $row['is_public'] = (int)$row['is_public'];
             unset($row['types_csv'], $row['type_ids_csv']);
         }
         unset($row);
@@ -364,13 +376,16 @@ function get_verse_notes(string $book_code, int $chapter, int $verse, array $use
  */
 function create_verse_note(array $user, string $book_code, int $chapter, int $verse,
                            array $type_ids, string $title, string $note_text,
-                           ?int $gem_std = null, ?int $gem_ord = null, ?int $gem_red = null): bool {
+                           ?int $gem_std = null, ?int $gem_ord = null, ?int $gem_red = null,
+                           int $is_public = 0): bool {
     if (should_use_remote_api()) {
         return false;
     }
     if ($user['is_guest']) {
         return false;
     }
+    // Non-admins are always private.
+    if (empty($user['is_admin'])) $is_public = 0;
     // Sanitize type_ids: keep only positive ints; default to General (1) if none.
     $type_ids = array_values(array_unique(array_filter(array_map('intval', $type_ids))));
     if (empty($type_ids)) $type_ids = [1];
@@ -385,13 +400,13 @@ function create_verse_note(array $user, string $book_code, int $chapter, int $ve
         $pdo->beginTransaction();
         $stmt = $pdo->prepare("
             INSERT INTO verse_notes
-                (user_id, username, book_code, chapter, verse, title, note_text,
+                (user_id, username, book_code, chapter, verse, title, note_text, is_public,
                  gem_std, gem_ord, gem_red)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ");
         $stmt->execute([
             $user['id'], $user['name'], $book_code, $chapter, $verse,
-            $title, $note_text,
+            $title, $note_text, $is_public,
             $gem_std, $gem_ord, $gem_red
         ]);
         $note_id = (int)$pdo->lastInsertId();
@@ -414,13 +429,16 @@ function create_verse_note(array $user, string $book_code, int $chapter, int $ve
  */
 function update_verse_note(int $note_id, array $user, string $book_code, int $chapter, int $verse,
                            array $type_ids, string $title, string $note_text,
-                           ?int $gem_std = null, ?int $gem_ord = null, ?int $gem_red = null): bool {
+                           ?int $gem_std = null, ?int $gem_ord = null, ?int $gem_red = null,
+                           int $is_public = 0): bool {
     if (should_use_remote_api()) {
         return false;
     }
     if ($user['is_guest']) {
         return false;
     }
+    // Non-admins cannot change visibility.
+    if (empty($user['is_admin'])) $is_public = 0;
     $type_ids = array_values(array_unique(array_filter(array_map('intval', $type_ids))));
     if (empty($type_ids)) $type_ids = [1];
     if (empty($title)) {
@@ -434,12 +452,12 @@ function update_verse_note(int $note_id, array $user, string $book_code, int $ch
         $pdo->beginTransaction();
         $stmt = $pdo->prepare("
             UPDATE verse_notes
-            SET title = ?, note_text = ?,
+            SET title = ?, note_text = ?, is_public = ?,
                 gem_std = ?, gem_ord = ?, gem_red = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ? AND user_id = ?
         ");
         $stmt->execute([
-            $title, $note_text,
+            $title, $note_text, $is_public,
             $gem_std, $gem_ord, $gem_red,
             $note_id, $user['id']
         ]);
@@ -486,6 +504,46 @@ function delete_verse_note(int $note_id, array $user): bool {
     } catch (Throwable $e) {
         error_log('delete_verse_note error: ' . $e->getMessage());
         return false;
+    }
+}
+
+/**
+ * Fetch all verse_notes for the current user (own notes) or all notes (admins).
+ * Used by notes.php "My Notes" list. Ordered by book / chapter / verse / created_at.
+ */
+function get_user_verse_notes(array $user): array {
+    if (should_use_remote_api()) return [];
+    if (!empty($user['is_guest']) || empty($user['id'])) return [];
+    try {
+        $pdo = bible_pdo();
+        $is_admin = !empty($user['is_admin']);
+        $sql = "
+            SELECT vn.id, vn.user_id, vn.username, vn.title, vn.note_text, vn.is_public,
+                   vn.book_code, vn.chapter, vn.verse,
+                   vn.gem_std, vn.gem_ord, vn.gem_red, vn.created_at, vn.updated_at,
+                   GROUP_CONCAT(nt.name ORDER BY nt.id SEPARATOR ', ') AS types_label
+            FROM verse_notes vn
+            LEFT JOIN verse_note_types vnt ON vnt.note_id = vn.id
+            LEFT JOIN note_type nt ON nt.id = vnt.type_id
+        ";
+        $params = [];
+        if (!$is_admin) {
+            $sql .= ' WHERE vn.user_id = ?';
+            $params[] = (int)$user['id'];
+        }
+        $sql .= ' GROUP BY vn.id ORDER BY vn.book_code, vn.chapter, vn.verse, vn.created_at ASC';
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        $rows = $stmt->fetchAll();
+        foreach ($rows as &$row) {
+            $row['is_public'] = (int)$row['is_public'];
+            $row['types_label'] = $row['types_label'] ?: 'General';
+        }
+        unset($row);
+        return $rows;
+    } catch (Throwable $e) {
+        error_log('get_user_verse_notes error: ' . $e->getMessage());
+        return [];
     }
 }
 

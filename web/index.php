@@ -505,6 +505,11 @@ if ($actual_count > 0) {
                     <label><input type="checkbox" class="notes-type-cb" value="3"> Isaiah-Bible Correlation</label>
                     <label><input type="checkbox" class="notes-type-cb" value="4"> Gematria</label>
                 </div>
+                <?php if (!empty($user['is_admin'])): ?>
+                <div id="notes-public-wrap" style="margin-top:4px">
+                    <label><input type="checkbox" id="notes-is-public" checked> Make public (visible to all visitors)</label>
+                </div>
+                <?php endif; ?>
                 <label>Title <span style="color:red" aria-hidden="true">*</span> <input type="text" id="notes-title" placeholder="e.g. First word 913"></label>
                 <label>Note text (toolbar uses the same editor as phpBB forum posts):</label>
                 <?= render_bbcode_toolbar('notesform', 'message') ?>
@@ -742,6 +747,7 @@ const NOTES_IS_ADMIN  = <?= json_encode(!empty($user['is_admin'])) ?>;
             titleEl.className = 'note-title-line';
             let titleHtml = '';
             if (safeTitle) titleHtml += '<strong>' + safeTitle + '</strong> ';
+            if (NOTES_IS_ADMIN && !n.is_public) titleHtml += '<span class="note-private-badge" title="Private note">&#x1F512;</span> ';
             titleHtml += typeTags + ' by <strong>' + safeUser + '</strong>' + gemNote +
                 ' <span class="note-date">' + ((n.created_at || '').substring(0, 10)) + '</span>';
             titleEl.innerHTML = titleHtml;
@@ -787,6 +793,7 @@ const NOTES_IS_ADMIN  = <?= json_encode(!empty($user['is_admin'])) ?>;
         document.getElementById('notes-gem-ord').value = (n.gem_ord != null ? n.gem_ord : '');
         document.getElementById('notes-gem-red').value = (n.gem_red != null ? n.gem_red : '');
         gemSec.hidden = !(gemCb && gemCb.checked);
+        if (NOTES_IS_ADMIN) { const cb = document.getElementById('notes-is-public'); if (cb) cb.checked = !!n.is_public; }
         const subBtn = document.getElementById('notes-submit');
         if (subBtn) subBtn.textContent = 'Update Note';
         const cnb = document.getElementById('notes-create-new');
@@ -804,6 +811,7 @@ const NOTES_IS_ADMIN  = <?= json_encode(!empty($user['is_admin'])) ?>;
         document.getElementById('notes-gem-ord').value = '';
         document.getElementById('notes-gem-red').value = '';
         if (gemSec) gemSec.hidden = true;
+        if (NOTES_IS_ADMIN) { const cb = document.getElementById('notes-is-public'); if (cb) cb.checked = true; }
         const subBtn = document.getElementById('notes-submit');
         if (subBtn) subBtn.textContent = 'Save Note';
         const cnb = document.getElementById('notes-create-new');
@@ -930,6 +938,7 @@ const NOTES_IS_ADMIN  = <?= json_encode(!empty($user['is_admin'])) ?>;
             gem_std: document.getElementById('notes-gem-std').value || '',
             gem_ord: document.getElementById('notes-gem-ord').value || '',
             gem_red: document.getElementById('notes-gem-red').value || '',
+            is_public: (NOTES_IS_ADMIN && document.getElementById('notes-is-public')?.checked) ? 1 : 0,
             csrf_token: (typeof CSRF_TOKEN !== 'undefined' ? CSRF_TOKEN : '')
         });
         if (isUpdate) {

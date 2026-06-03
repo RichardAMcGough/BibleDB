@@ -204,6 +204,8 @@ try {
             $gstd   = (($_REQUEST['gem_std'] ?? '') !== '') ? (int)$_REQUEST['gem_std'] : null;
             $gord   = (($_REQUEST['gem_ord'] ?? '') !== '') ? (int)$_REQUEST['gem_ord'] : null;
             $gred   = (($_REQUEST['gem_red'] ?? '') !== '') ? (int)$_REQUEST['gem_red'] : null;
+            // is_public: only honoured for admins; non-admins always 0.
+            $is_public = (!empty($u['is_admin']) && !empty($_REQUEST['is_public'])) ? 1 : 0;
 
             if (!$book || !$chap || !$vrs || $title === '' || $text === '') {
                 http_response_code(400);
@@ -246,7 +248,7 @@ try {
                 break;
             }
 
-            $ok = create_verse_note($u, $book, $chap, $vrs, $type_ids, $title, $text, $gstd, $gord, $gred);
+            $ok = create_verse_note($u, $book, $chap, $vrs, $type_ids, $title, $text, $gstd, $gord, $gred, $is_public);
             if ($ok) {
                 echo json_encode(['success' => true]);
             } else {
@@ -288,6 +290,7 @@ try {
             $gstd   = (($_REQUEST['gem_std'] ?? '') !== '') ? (int)$_REQUEST['gem_std'] : null;
             $gord   = (($_REQUEST['gem_ord'] ?? '') !== '') ? (int)$_REQUEST['gem_ord'] : null;
             $gred   = (($_REQUEST['gem_red'] ?? '') !== '') ? (int)$_REQUEST['gem_red'] : null;
+            $is_public = (!empty($u['is_admin']) && !empty($_REQUEST['is_public'])) ? 1 : 0;
 
             if (!$note_id || !$book || !$chap || !$vrs || !$title || $text === '') {
                 http_response_code(400);
@@ -330,7 +333,7 @@ try {
                 break;
             }
 
-            $ok = update_verse_note($note_id, $u, $book, $chap, $vrs, $type_ids, $title, $text, $gstd, $gord, $gred);
+            $ok = update_verse_note($note_id, $u, $book, $chap, $vrs, $type_ids, $title, $text, $gstd, $gord, $gred, $is_public);
             if ($ok) {
                 echo json_encode(['success' => true]);
             } else {
