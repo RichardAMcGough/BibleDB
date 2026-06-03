@@ -111,8 +111,9 @@ function should_use_remote_api(): bool {
 
 /**
  * Get the current user for per-user features like notes.
- * Tries to bootstrap a phpBB session if 'phpbb_path' is configured in config.php
- * and the common.php is present. Falls back to a dev PHP session (demo user).
+ * Tries to read the current phpBB session directly from the phpBB database
+ * (avoids bootstrapping phpBB's Symfony DI container, which is not safe from
+ * external PHP files). Falls back to a dev PHP session (demo user).
  * Returns array with 'id', 'name', 'is_guest'.
  * (Renamed from get_current_user to avoid collision with PHP built-in.)
  */
@@ -125,51 +126,19 @@ function get_bible_user(): array {
 
     $phpbb_path = rtrim($cfg['phpbb_path'] ?? '', '/\\');
     if ($phpbb_path !== '') {
-        // Resolve relative paths against the web/ directory so config values
-        // like '../../phpBB' or '../forum' work without needing absolute paths.
+        // Resolve relative paths against the web/ directory.
         if ($phpbb_path[0] !== '/' && !(strlen($phpbb_path) > 1 && $phpbb_path[1] === ':')) {
             $phpbb_path = __DIR__ . '/' . $phpbb_path;
         }
-        // CRITICAL: normalise with realpath() so any '..' segments are resolved.
-        // phpBB's DI container cache filename is md5($phpbb_root_path); if the
-        // path contains '..' the MD5 won't match the on-disk cache and phpBB
-        // tries to rebuild the container, failing with "getParameter() on null".
         $resolved = realpath($phpbb_path);
         $phpbb_path = ($resolved !== false ? $resolved : $phpbb_path);
         $phpbb_path = rtrim($phpbb_path, '/\\') . '/';
     }
 
-    if ($phpbb_path && file_exists($phpbb_path . 'common.php')) {
-        // Lightweight phpBB session bootstrap just for identity.
-        if (!defined('IN_PHPBB')) {
-            define('IN_PHPBB', true);
-        }
-        global $phpbb_root_path, $phpEx, $user, $auth;
-        $phpbb_root_path = $phpbb_path;
-        $phpEx = 'php';
-        // Include only if not already bootstrapped by an outer header.
-        if (!isset($user) || !is_object($user) || !method_exists($user, 'session_begin')) {
-            // phpBB's DI container resolves its own internal paths relative to
-            // the current working directory. chdir() to the phpBB root before
-            // bootstrapping so the cache container doesn't fail with
-            // "Call to a member function getParameter() on null".
-            $prev_cwd = getcwd();
-            chdir($phpbb_path);
-            require $phpbb_root_path . 'common.php';
-            chdir($prev_cwd);
-        }
-        if (isset($user) && method_exists($user, 'session_begin')) {
-            $user->session_begin();
-            if (isset($auth) && method_exists($auth, 'acl')) {
-                $auth->acl($user->data);
-            }
-            $uid = (int)($user->data['user_id'] ?? 0);
-            $uname = $user->data['username'] ?? 'User';
-            $u = [
-                'id'       => $uid,
-                'name'     => $uname,
-                'is_guest' => ($uid <= 1), // phpBB ANONYMOUS is usually 1
-            ];
+    if ($phpbb_path && file_exists($phpbb_path . 'config.php')) {
+        $phpbb_user = _phpbb_user_from_session($phpbb_path);
+        if ($phpbb_user !== null) {
+            $u = $phpbb_user;
             return $u;
         }
     }
@@ -177,16 +146,12 @@ function get_bible_user(): array {
     // Standalone / dev fallback: use PHP session so notes work without phpBB.
     // WARNING: all "dev" visitors share user id 999999 and can edit each others' notes.
     // This is intentional for local testing only; production requires phpbb_path for real per-user isolation.
-    // Also: this session_start() must happen before any output is sent (call get_bible_user() early).
     _start_session_safe();
     if (empty($_SESSION['bible_notes_user_id'])) {
-        $_SESSION['bible_notes_user_id'] = 999999; // high demo id to avoid real phpBB collisions
+        $_SESSION['bible_notes_user_id'] = 999999;
         $_SESSION['bible_notes_username'] = 'Demo User (local dev)';
     }
-    // Determine whether we are running in local dev mode by checking for the
-    // production bwHeader.inc (same sentinel used by bible_is_local_layout() in helpers.php).
-    // On production without phpbb_path configured there is no real auth, so
-    // treat everyone as a guest to block note writes and hide the Add Note UI.
+    // On production without working phpBB auth, treat everyone as a guest.
     $is_local_dev = !file_exists(__DIR__ . '/../include/bwHeader.inc');
     $u = [
         'id'       => (int)$_SESSION['bible_notes_user_id'],
@@ -194,6 +159,75 @@ function get_bible_user(): array {
         'is_guest' => !$is_local_dev,
     ];
     return $u;
+}
+
+/**
+ * Read the logged-in phpBB user directly from the phpBB database —
+ * no common.php, no Symfony DI container, no chdir().
+ * Parses phpBB's config.php for DB credentials and table prefix,
+ * finds the session cookie, then queries phpbb_sessions + phpbb_users.
+ * Returns null if the user is a guest or the session cannot be found.
+ */
+function _phpbb_user_from_session(string $phpbb_path): ?array {
+    // Parse phpBB's config.php with regex so we never execute it in our scope.
+    $src = @file_get_contents($phpbb_path . 'config.php');
+    if ($src === false) return null;
+    $get = function(string $var) use ($src): string {
+        return preg_match('/\$' . preg_quote($var, '/') . '\s*=\s*[\'"]([^\'"]*)[\'"]/', $src, $m)
+            ? $m[1] : '';
+    };
+    $table_prefix = $get('table_prefix') ?: 'phpbb_';
+    $dbhost   = $get('dbhost')   ?: '127.0.0.1';
+    $dbname   = $get('dbname');
+    $dbuser   = $get('dbuser');
+    $dbpasswd = $get('dbpasswd');
+    $dbport   = (int)($get('dbport') ?: 3306);
+    if (!$dbname || !$dbuser) return null;
+
+    // Find phpBB session cookie: phpBB names it "<cookie_name>_sid"
+    // where cookie_name is a short string. We detect it by scanning for
+    // cookies whose value is a 32-char hex string and name ends in '_sid'.
+    $sid = null;
+    foreach ($_COOKIE as $cname => $cval) {
+        $cval = trim((string)$cval);
+        if (substr($cname, -4) === '_sid' && preg_match('/^[0-9a-f]{32}$/i', $cval)) {
+            $sid = $cval;
+            break;
+        }
+    }
+    // All-zeros SID = not logged in
+    if (!$sid || $sid === str_repeat('0', 32)) return null;
+
+    try {
+        $dsn = sprintf('mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4', $dbhost, $dbport, $dbname);
+        $pdo = new PDO($dsn, $dbuser, $dbpasswd, [
+            PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            PDO::ATTR_EMULATE_PREPARES   => false,
+        ]);
+        $tbl_s = $table_prefix . 'sessions';
+        $tbl_u = $table_prefix . 'users';
+        $stmt = $pdo->prepare(
+            "SELECT s.session_user_id, u.username
+               FROM `{$tbl_s}` s
+               JOIN `{$tbl_u}` u ON u.user_id = s.session_user_id
+              WHERE s.session_id = ?
+              LIMIT 1"
+        );
+        $stmt->execute([$sid]);
+        $row = $stmt->fetch();
+        if (!$row) return null;
+        $uid = (int)$row['session_user_id'];
+        if ($uid <= 1) return null; // phpBB ANONYMOUS
+        return [
+            'id'       => $uid,
+            'name'     => $row['username'],
+            'is_guest' => false,
+        ];
+    } catch (\Exception $e) {
+        // DB error or session not found — fall through to dev fallback
+        return null;
+    }
 }
 
 // ===================================================================
