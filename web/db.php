@@ -12,6 +12,7 @@ require_once __DIR__ . '/remote_api.php';
 if (!function_exists('_start_session_safe')) {
     function _start_session_safe(): void {
         if (session_status() !== PHP_SESSION_NONE) return;
+        if (headers_sent()) return; // can't start session after output
         $path = session_save_path();
         if ($path !== '' && !is_dir($path)) {
             session_save_path(sys_get_temp_dir());

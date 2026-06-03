@@ -114,6 +114,7 @@ function bible_render_user_badge(bool $inflow = true): void {
     if ($phpbb_path === '' && !$force_show) return;
 
     $user = get_bible_user();
+    if ($user['is_guest']) return; // not logged in — don't show badge
     $name = htmlspecialchars($user['name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
     $is_dev = ((int)$user['id'] === 999999);
     $cls = 'bible-user-badge';
