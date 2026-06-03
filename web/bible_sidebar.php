@@ -17,6 +17,7 @@ function _bsActive(string $file): string {
       <a href="els.php"<?= _bsActive('els.php') ?>>ELS Grid</a>
       <a href="numbers.php"<?= _bsActive('numbers.php') ?>>Number Sequences</a>
       <a href="stats.php"<?= _bsActive('stats.php') ?>>Stats</a>
+      <a href="notes.php"<?= _bsActive('notes.php') ?>>My Notes</a>
     </nav>
   </div>
 </aside>

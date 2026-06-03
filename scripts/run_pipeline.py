@@ -44,7 +44,8 @@ STEP and everything after to run; everything before is treated as done).
 
 Self-healing schema migrations run every invocation (idempotent). Ensures:
 variant.position column, verse_views table + record_verse_view proc (for
-view counters), GetGematriaWords proc (for local gematria searches).
+view counters), GetGematriaWords proc (for local gematria searches),
+user_notes table (for per-user BBCode notes / personal notebook), verse_notes table (collaborative per-verse commentary + gematria notes).
 
 After a successful run, the script prints a reminder to sync web/config.php
 'database' key (and use_remote_api=false) so the browser UI is not blank/empty.
@@ -325,9 +326,9 @@ def preflight(db_name: str, cfg_path: Path, args, log, dry_run: bool = False, db
 def ensure_schema_migrations(cfg: dict, log) -> bool:
     """Apply idempotent schema migrations on top of the current DB.
     Handles: variant.position, verse_views table + record_verse_view proc,
-    GetGematriaWords proc (for local gematria search), plus self-heal of
-    word.strongs_primary for compound tags so gematria results show the
-    correct (lexical) Strong's number.
+    GetGematriaWords proc (for local gematria search), user_notes table
+    (for per-user formatted notes), plus self-heal of word.strongs_primary
+    for compound tags so gematria results show the correct (lexical) Strong's number.
     Returns True on success."""
     from _db import get_connection
     log("Schema migrations (idempotent)...")
@@ -394,6 +395,185 @@ def ensure_schema_migrations(cfg: dict, log) -> bool:
             """)
             conn.commit()
             log("    ✓ created verse_views table")
+
+        # Ensure user_notes table (per-user BBCode-formatted personal notes / notebook)
+        cur.execute(
+            "SELECT COUNT(*) FROM information_schema.TABLES "
+            " WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'user_notes'",
+            (cfg["database"],),
+        )
+        has_notes = (cur.fetchone()[0] or 0) > 0
+        if not has_notes:
+            log("  - user_notes table missing — creating ...")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS user_notes (
+                    user_id      INT UNSIGNED NOT NULL PRIMARY KEY,
+                    notes        TEXT NULL,
+                    updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """)
+            conn.commit()
+            log("    ✓ created user_notes table")
+
+        # Ensure verse_notes table for collaborative per-verse commentary notes.
+        # Multiple notes per verse (distinguished by required title, e.g. for different
+        # word ranges like 913 vs 703); public to all. Supports gematria-type notes.
+        # Title column is enforced NOT NULL via create + migration.
+        cur.execute(
+            "SELECT COUNT(*) FROM information_schema.TABLES "
+            " WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'verse_notes'",
+            (cfg["database"],),
+        )
+        has_vnotes = (cur.fetchone()[0] or 0) > 0
+        if not has_vnotes:
+            log("  - verse_notes table missing — creating ...")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS verse_notes (
+                    id           INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    user_id      INT UNSIGNED NOT NULL,
+                    username     VARCHAR(100) NOT NULL,
+                    book_code    VARCHAR(10) NOT NULL,
+                    chapter      SMALLINT UNSIGNED NOT NULL,
+                    verse        SMALLINT UNSIGNED NOT NULL,
+                    note_type    ENUM('general','gematria') NOT NULL DEFAULT 'general',
+                    title        VARCHAR(255) NOT NULL,
+                    note_text    TEXT NOT NULL,
+                    gem_std      INT NULL,
+                    gem_ord      INT NULL,
+                    gem_red      INT NULL,
+                    created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    KEY idx_vn_verse (book_code, chapter, verse),
+                    KEY idx_vn_user (user_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """)
+            conn.commit()
+            log("    ✓ created verse_notes table")
+
+        # Ensure title is NOT NULL (required). Migrate existing installs where it was nullable.
+        # Any legacy rows with empty title get a placeholder using their id (user can edit later).
+        try:
+            cur.execute(
+                "SELECT IS_NULLABLE FROM information_schema.COLUMNS "
+                " WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'verse_notes' AND COLUMN_NAME = 'title'",
+                (cfg["database"],),
+            )
+            row = cur.fetchone()
+            if row and (row[0] or '').upper() == 'YES':
+                log("  - migrating verse_notes.title to NOT NULL (required to distinguish notes for same verse, e.g. 913 vs 703)...")
+                cur.execute(
+                    "UPDATE verse_notes SET title = CONCAT('Note ', id) "
+                    " WHERE title IS NULL OR title = ''"
+                )
+                cur.execute(
+                    "ALTER TABLE verse_notes MODIFY COLUMN title VARCHAR(255) NOT NULL"
+                )
+                conn.commit()
+                log("    ✓ title column is now NOT NULL")
+        except Exception as e:
+            log("    ! verse_notes title migration skipped/partial: " + str(e))
+
+        # ── note_type + verse_note_types (junction-table note classification) ──────
+        # note_type is a tiny lookup table (General, BW, IBC, Gematria).
+        # verse_note_types is the many-to-many junction so one note can carry
+        # multiple type tags (e.g. BW + Gematria).
+        # Migration path: if verse_notes still has the old note_type ENUM column,
+        # copy the existing values into the junction table, then drop the column.
+        cur.execute(
+            "SELECT COUNT(*) FROM information_schema.TABLES "
+            " WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'note_type'",
+            (cfg["database"],),
+        )
+        has_note_type = (cur.fetchone()[0] or 0) > 0
+        if not has_note_type:
+            log("  - note_type table missing — creating and seeding ...")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS note_type (
+                    id     TINYINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    name   VARCHAR(30) NOT NULL,
+                    label  VARCHAR(80) NOT NULL,
+                    UNIQUE KEY uq_note_type_name (name)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """)
+            # Fixed IDs so PHP code can reference them reliably.
+            cur.execute("""
+                INSERT IGNORE INTO note_type (id, name, label) VALUES
+                    (1, 'General',  'General (commentary)'),
+                    (2, 'BW',       'Bible Wheel'),
+                    (3, 'IBC',      'Isaiah-Bible Correlation'),
+                    (4, 'Gematria', 'Gematria')
+            """)
+            conn.commit()
+            log("    ✓ note_type table created and seeded")
+        else:
+            # Ensure all four seed rows exist even if table was created earlier.
+            cur.execute("""
+                INSERT IGNORE INTO note_type (id, name, label) VALUES
+                    (1, 'General',  'General (commentary)'),
+                    (2, 'BW',       'Bible Wheel'),
+                    (3, 'IBC',      'Isaiah-Bible Correlation'),
+                    (4, 'Gematria', 'Gematria')
+            """)
+            conn.commit()
+            log("    ✓ note_type table verified")
+
+        cur.execute(
+            "SELECT COUNT(*) FROM information_schema.TABLES "
+            " WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'verse_note_types'",
+            (cfg["database"],),
+        )
+        has_vnt = (cur.fetchone()[0] or 0) > 0
+        if not has_vnt:
+            log("  - verse_note_types junction table missing — creating ...")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS verse_note_types (
+                    note_id  INT UNSIGNED NOT NULL,
+                    type_id  TINYINT UNSIGNED NOT NULL,
+                    PRIMARY KEY (note_id, type_id),
+                    KEY idx_vnt_type (type_id),
+                    CONSTRAINT fk_vnt_note FOREIGN KEY (note_id) REFERENCES verse_notes (id) ON DELETE CASCADE,
+                    CONSTRAINT fk_vnt_type FOREIGN KEY (type_id) REFERENCES note_type (id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """)
+            conn.commit()
+            log("    ✓ verse_note_types table created")
+
+        # Migrate old note_type ENUM column → junction rows, then drop it.
+        # This runs once: after the column is gone the check is a no-op.
+        try:
+            cur.execute(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                " WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'verse_notes' "
+                "   AND COLUMN_NAME = 'note_type'",
+                (cfg["database"],),
+            )
+            if cur.fetchone():
+                log("  - migrating verse_notes.note_type ENUM → verse_note_types junction ...")
+                # Copy 'general' rows → type_id 1 (General), 'gematria' rows → type_id 4 (Gematria).
+                # INSERT IGNORE so re-runs are safe if partially migrated.
+                cur.execute("""
+                    INSERT IGNORE INTO verse_note_types (note_id, type_id)
+                    SELECT vn.id, nt.id
+                    FROM verse_notes vn
+                    JOIN note_type nt ON (
+                        (vn.note_type = 'general'  AND nt.name = 'General') OR
+                        (vn.note_type = 'gematria' AND nt.name = 'Gematria')
+                    )
+                """)
+                # Any notes with no junction row yet get General as default.
+                cur.execute("""
+                    INSERT IGNORE INTO verse_note_types (note_id, type_id)
+                    SELECT vn.id, 1
+                    FROM verse_notes vn
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM verse_note_types vnt WHERE vnt.note_id = vn.id
+                    )
+                """)
+                cur.execute("ALTER TABLE verse_notes DROP COLUMN note_type")
+                conn.commit()
+                log("    ✓ note_type ENUM migrated and column dropped")
+        except Exception as e:
+            log("    ! note_type migration skipped/partial: " + str(e))
 
         # Ensure record_verse_view proc (called by index.php record_verse_view etc.)
         log("  - ensuring record_verse_view procedure ...")

@@ -247,3 +247,213 @@ function letter_count(?string $text, string $language): int {
         $text
     );
 }
+
+// ----------------------------------------------------------------------
+// BBCode renderer for user notes (forum-post style formatting).
+// See db.php for get_bible_user() and the notes storage functions.
+// ----------------------------------------------------------------------
+
+/**
+ * Convert a limited, safe subset of BBCode to HTML (forum-post style).
+ * Input should be user-controlled text. Output is safe HTML.
+ * Supported: [b], [i], [u], [s], [color=], [size=], [quote], [quote=Name], [code], [list][*], [url], [img]
+ */
+function bbcode_to_html(?string $text): string {
+    if ($text === null || trim($text) === '') {
+        return '';
+    }
+    // Escape first for safety
+    $text = htmlspecialchars($text, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+
+    // Protect [code]...[/code] from nl2br (pre already preserves whitespace/newlines)
+    $codeBlocks = [];
+    $text = preg_replace_callback('/\[code\](.*?)\[\/code\]/is', function($m) use (&$codeBlocks) {
+        $ph = "\0CODE" . count($codeBlocks) . "\0";
+        $codeBlocks[$ph] = $m[1];
+        return $ph;
+    }, $text);
+
+    // Order: more specific / multi-line first (on the masked text)
+    // Quotes
+    $text = preg_replace('/\[quote=([^\]]{1,100})\](.*?)\[\/quote\]/is', '<blockquote><strong>$1 wrote:</strong><br>$2</blockquote>', $text);
+    $text = preg_replace('/\[quote\](.*?)\[\/quote\]/is', '<blockquote>$1</blockquote>', $text);
+
+    // Lists (basic, single-level only; nested lists have limited support)
+    $text = preg_replace('/\[list\](.*?)\[\/list\]/is', '<ul>$1</ul>', $text);
+    $text = preg_replace('/\[\*\](.*?)(?=\[\*|\[\/list\]|<\/ul>|$)/is', '<li>$1</li>', $text);
+
+    // Inline
+    $text = preg_replace('/\[b\](.*?)\[\/b\]/is', '<strong>$1</strong>', $text);
+    $text = preg_replace('/\[i\](.*?)\[\/i\]/is', '<em>$1</em>', $text);
+    $text = preg_replace('/\[u\](.*?)\[\/u\]/is', '<u>$1</u>', $text);
+    $text = preg_replace('/\[s\](.*?)\[\/s\]/is', '<s>$1</s>', $text);
+
+    // Color — only accept safe hex or named-color values (no CSS injection)
+    $text = preg_replace('/\[color=([a-zA-Z#0-9]{1,30})\](.*?)\[\/color\]/is', '<span style="color:$1">$2</span>', $text);
+
+    // Size — percent-based (clamped 50–300 to prevent absurdly large text)
+    $text = preg_replace_callback('/\[size=(\d{1,3})\](.*?)\[\/size\]/is', function ($m) {
+        $pct = max(50, min(300, (int)$m[1]));
+        return '<span style="font-size:' . $pct . '%">' . $m[2] . '</span>';
+    }, $text);
+
+    // Links
+    $text = preg_replace('/\[url\](https?:\/\/[^\s<"]+?)\[\/url\]/i', '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>', $text);
+    $text = preg_replace('/\[url=(https?:\/\/[^\s<"]+?)\](.*?)\[\/url\]/i', '<a href="$1" target="_blank" rel="noopener noreferrer">$2</a>', $text);
+
+    // Images (limited)
+    $text = preg_replace('/\[img\](https?:\/\/[^\s<"]+?)\[\/img\]/i', '<img src="$1" alt="user image" style="max-width:100%; height:auto;">', $text);
+
+    // Convert newlines to <br> (after blocks) -- code regions are still masked so \n inside stay literal
+    $text = nl2br($text, false);
+
+    // Restore code blocks (inner content keeps its original \n, wrapped in pre which preserves them)
+    foreach ($codeBlocks as $ph => $inner) {
+        $text = str_replace($ph, '<pre><code>' . $inner . '</code></pre>', $text);
+    }
+
+    return $text;
+}
+
+/**
+ * Render an ABBC3-style BBCode toolbar using Font Awesome 4 icons.
+ * Compatible with phpBB's editor.js (bbstyle / bbfontstyle API).
+ *
+ * Pages must load before </body>:
+ *   <script> var form_name = '…'; var text_name = '…'; </script>
+ *   <script src="js/phpbb-editor.js"></script>
+ *   <script src="js/bbcode-toolbar.js"></script>
+ *   <script src="js/abbc3-toolbar.js"></script>
+ * And in <head>:
+ *   <link rel="stylesheet" href="…/font-awesome.min.css">
+ *
+ * Pass the *name* attributes (not ids) of the <form> and <textarea>.
+ */
+function render_bbcode_toolbar(string $form_name = 'postform', string $text_name = 'message'): string {
+    $h = function ($s) { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); };
+    $f = $h($form_name);
+    $t = $h($text_name);
+
+    $out  = '<div class="abbc3-toolbar" data-form="' . $f . '" data-field="' . $t . '">';
+
+    // Bold / Italic / Underline / Strikethrough
+    $out .= '<button type="button" class="abbc3-btn" onclick="bbstyle(0)" title="Bold [b]" accesskey="b"><i class="fa fa-bold"></i></button>';
+    $out .= '<button type="button" class="abbc3-btn" onclick="bbstyle(2)" title="Italic [i]" accesskey="i"><i class="fa fa-italic"></i></button>';
+    $out .= '<button type="button" class="abbc3-btn" onclick="bbstyle(4)" title="Underline [u]" accesskey="u"><i class="fa fa-underline"></i></button>';
+    $out .= '<button type="button" class="abbc3-btn" onclick="insert_bbcode(\'[s]\',\'[/s]\')" title="Strikethrough [s]"><i class="fa fa-strikethrough"></i></button>';
+
+    $out .= '<span class="abbc3-sep"></span>';
+
+    // Quote / Code
+    $out .= '<button type="button" class="abbc3-btn" onclick="bbstyle(6)" title="Quote [quote]" accesskey="q"><i class="fa fa-quote-left"></i></button>';
+    $out .= '<button type="button" class="abbc3-btn" onclick="bbstyle(8)" title="Code block [code]" accesskey="c"><i class="fa fa-code"></i></button>';
+
+    $out .= '<span class="abbc3-sep"></span>';
+
+    // List / List-item
+    $out .= '<button type="button" class="abbc3-btn" onclick="bbstyle(10)" title="Bullet list [list]" accesskey="l"><i class="fa fa-list"></i></button>';
+    $out .= '<button type="button" class="abbc3-btn" onclick="bbstyle(-1)" title="List item [*]" accesskey="y"><i class="fa fa-asterisk"></i></button>';
+
+    $out .= '<span class="abbc3-sep"></span>';
+
+    // URL / Image
+    $out .= '<button type="button" class="abbc3-btn" onclick="bbstyle(16)" title="Link [url]" accesskey="w"><i class="fa fa-link"></i></button>';
+    $out .= '<button type="button" class="abbc3-btn" onclick="bbstyle(14)" title="Image [img]" accesskey="p"><i class="fa fa-picture-o"></i></button>';
+
+    $out .= '<span class="abbc3-sep"></span>';
+
+    // Color + size + copy/paste — wrapped in a no-break group so they stay together
+    $out .= '<span class="abbc3-group">';
+
+    // Color picker
+    $out .= '<span class="abbc3-color-wrap">';
+    $out .= '<button type="button" class="abbc3-btn abbc3-color-btn" onclick="changePalette(\'abbc3_palette\')" title="Font color [color=]"><i class="fa fa-tint"></i></button>';
+    $out .= '<div id="abbc3_palette"></div>';
+    $out .= '</span>';
+
+    // Font size
+    $out .= '<select class="abbc3-size-sel" onchange="abbc3InsertSize(this)" title="Font size [size=]">';
+    $out .= '<option value="">Size…</option>';
+    $out .= '<option value="50">Tiny</option>';
+    $out .= '<option value="85">Small</option>';
+    $out .= '<option value="100">Normal</option>';
+    $out .= '<option value="150">Large</option>';
+    $out .= '<option value="200">Huge</option>';
+    $out .= '</select>';
+
+    $out .= '<span class="abbc3-sep"></span>';
+
+    // Copy / Paste / Strip BBCode
+    $out .= '<button type="button" class="abbc3-btn" onclick="bbCopy()" title="Copy selection to internal buffer"><i class="fa fa-copy"></i></button>';
+    $out .= '<button type="button" class="abbc3-btn" onclick="bbPaste()" title="Paste from internal buffer"><i class="fa fa-paste"></i></button>';
+    $out .= '<button type="button" class="abbc3-btn" onclick="bbPlain()" title="Strip BBCode from selection"><i class="fa fa-eraser"></i></button>';
+
+    $out .= '</span>'; // end .abbc3-group
+
+    $out .= '</div>';
+
+    return $out;
+}
+
+// ===================================================================
+// Session helper — defined in db.php; duplicated here as fallback
+// when helpers.php is loaded without db.php.
+// ===================================================================
+
+if (!function_exists('_start_session_safe')) {
+    function _start_session_safe(): void {
+        if (session_status() !== PHP_SESSION_NONE) return;
+        $path = session_save_path();
+        if ($path !== '' && !is_dir($path)) {
+            session_save_path(sys_get_temp_dir());
+        }
+        session_start();
+    }
+}
+
+// ===================================================================
+// CSRF protection helpers (for note POSTs etc.)
+// ===================================================================
+
+/**
+ * Get (or generate) the per-session CSRF token.
+ * Starts the session if needed (dev fallback path).
+ * Call early, before any output.
+ */
+function get_csrf_token(): string {
+    _start_session_safe();
+    if (empty($_SESSION['csrf_token'])) {
+        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    }
+    return $_SESSION['csrf_token'];
+}
+
+/**
+ * Validate CSRF token from request.
+ * Accepts token from $_POST['csrf_token'], $_REQUEST['csrf_token'],
+ * or X-CSRF-Token header (for AJAX).
+ * Uses hash_equals for timing-safe compare.
+ */
+function validate_csrf_token(): bool {
+    if (session_status() === PHP_SESSION_NONE) {
+        session_start();
+    }
+    $sessionToken = $_SESSION['csrf_token'] ?? '';
+    if ($sessionToken === '') {
+        return false;
+    }
+    $token = $_POST['csrf_token'] ?? $_REQUEST['csrf_token'] ?? '';
+    if ($token === '' && !empty($_SERVER['HTTP_X_CSRF_TOKEN'])) {
+        $token = $_SERVER['HTTP_X_CSRF_TOKEN'];
+    }
+    return hash_equals($sessionToken, (string)$token);
+}
+
+/**
+ * Emit a <meta> tag with the CSRF token for JS to pick up.
+ * Also useful for forms.
+ */
+function emit_csrf_meta(): void {
+    $token = get_csrf_token();
+    echo '<meta name="csrf-token" content="' . htmlspecialchars($token, ENT_QUOTES, 'UTF-8') . '">' . "\n";
+}

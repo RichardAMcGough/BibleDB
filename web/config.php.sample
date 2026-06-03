@@ -19,4 +19,18 @@ return [
     // Base URL of the API (without trailing slash). Example:
     // 'remote_api_base' => 'https://your-live-domain.com/bible',
     'remote_api_base' => '',
+
+    // === Optional phpBB integration for per-user features (notes, etc.) ===
+    // Set this to the filesystem path to your phpBB root (with trailing slash).
+    // If set and common.php exists, the notes page (and future user features)
+    // will use phpBB's $user->data['user_id'] and username for ownership.
+    // Example (adjust to your setup): '/home/user/public_html/forum/'
+    // Leave empty for dev mode (falls back to PHP session with a demo user).
+    'phpbb_path' => '',
+
+    // Optional public URL prefix for your phpBB (used to load the real post editor JS/CSS
+    // from your forum if you prefer to reference the live assets instead of the vendored copy
+    // in web/js/phpbb-editor.js). Include trailing slash. Example: '/forum/' or 'https://forum.example.com/'.
+    // If empty we use the local vendored editor (recommended for isolation).
+    'phpbb_url' => '',
 ];

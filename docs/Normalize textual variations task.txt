@@ -1,0 +1,138 @@
+GOAL: Normalize textual variations by Bible version so I can display the variations in the web page by selecting the version/edition(s). 
+
+CURRENT STATUS: We successfully imported data from the TAGNT and TAHOT files in the project folder. The current display page in the project file is web/index.php. The user can toggle through individual word variations. I want them to be able to just choose the version from a dropdown for all words displayed (no individual toggling). This will require the ability to query the Db for the verse(s) by version/edition(s).
+
+I list my tables & their columns in the section below called "Tables in SCHEMA stepbible in my MARIA DB"
+
+PROBLEM: Not all textual variations are listed in the TAGNT and TAHOT files. The most obvious example is the moveable nu. E.g. the NA27 will often write "estin" while Scrivener's writes "esti".  I want to compare the NT data with two other tables in my database. The tables are called bible_na27 and bible_scr (Scrivener's Greek NT). I want to track ALL variations, and add them to a single unified table (perhaps the existing variation table). 
+
+I need a script that will parse the NT data in verse_text column in the bible_na27 and the bible_scr tables. 
+
+First, the script should populate the verseunicode column (overwriting the existing data). It needs to convert ascii text to Greek unicode. The project folder has a file called pupulate_unicode.py that needs to be updated to use the verse_text field for both databases. Currently it uses Verse_Text_Pointed as the source in the bible_na27. That needs to be changed to use verse_text. 
+
+IMPORTANT: We want to strip any diacritial marks and punctuation. Leaving only words separated by single spaces. But we MUST keep the IOTA SUBSCRIPT (which falls in the range of the diacritcals).  
+
+
+Tables in SCHEMA stepbible in my MARIA DB 
+bible_na27	Verse_Order	1	int	YES			
+bible_na27	Book	2	int	YES			
+bible_na27	Chapter	3	int	YES			
+bible_na27	Verse	4	int	YES			
+bible_na27	Verse_Text	5	varchar(500)	YES			
+bible_na27	Gematria	6	int	YES			
+bible_na27	Verse_Text_Pointed	7	varchar(1000)	YES			
+bible_na27	verseunicode	8	varchar(500)	YES			
+bible_scr	Verse_Order	1	int	YES			
+bible_scr	Book	2	int	YES			
+bible_scr	Chapter	3	int	YES			
+bible_scr	Verse	4	int	YES			
+bible_scr	Verse_Text	5	varchar(500)	YES			
+bible_scr	Gematria	6	int	YES			
+bible_scr	verseunicode	7	varchar(500)	YES			
+book	id	1	tinyint unsigned	NO	PRI		
+book	osis_code	2	varchar(8)	NO	UNI		
+book	name	3	varchar(40)	NO			
+book	testament	4	enum('OT','NT')	NO			
+book	language	5	enum('Hebrew','Greek')	NO			
+book	book_order	6	tinyint unsigned	NO			
+edition	id	1	tinyint unsigned	NO	PRI		auto_increment
+edition	code	2	varchar(8)	NO	MUL		
+edition	name	3	varchar(80)	NO			
+edition	language	4	enum('Hebrew','Greek')	NO			
+edition	description	5	varchar(255)	YES			
+edition	edition_order	6	tinyint unsigned	NO			
+gematria_verse	verse_id	1	int unsigned	NO	PRI		
+gematria_verse	standard	2	mediumint unsigned	NO		0	
+gematria_verse	standard_sofit	3	mediumint unsigned	NO		0	
+gematria_verse	ordinal	4	mediumint unsigned	NO		0	
+gematria_verse	reduced	5	tinyint unsigned	NO		0	
+gematria_word	word_id	1	int unsigned	NO	PRI		
+gematria_word	standard	2	smallint unsigned	NO		0	
+gematria_word	standard_sofit	3	smallint unsigned	NO		0	
+gematria_word	ordinal	4	smallint unsigned	NO		0	
+gematria_word	reduced	5	tinyint unsigned	NO		0	
+v_verse	verse_id	1	int unsigned	NO		0	
+v_verse	book	2	varchar(8)	NO			
+v_verse	book_name	3	varchar(40)	NO			
+v_verse	testament	4	enum('OT','NT')	NO			
+v_verse	language	5	enum('Hebrew','Greek')	NO			
+v_verse	chapter	6	smallint unsigned	NO			
+v_verse	verse	7	smallint unsigned	NO			
+v_verse	osis_ref	8	varchar(24)	NO			
+v_verse	raw_ref	9	varchar(64)	NO			
+v_verse	text_original	10	mediumtext	NO			
+v_verse	text_english	11	mediumtext	NO			
+v_verse	word_count	12	smallint unsigned	NO		0	
+v_verse	has_significant_variant	13	tinyint(1)	NO		0	
+variant	id	1	int unsigned	NO	PRI		auto_increment
+variant	word_id	2	int unsigned	NO	MUL		
+variant	kind	3	enum('meaning','spelling','omission','addition')	NO	MUL		
+variant	text_original	4	varchar(255)	YES			
+variant	transliteration	5	varchar(255)	YES			
+variant	translation	6	varchar(255)	YES			
+variant	strongs	7	varchar(64)	YES			
+variant	strongs_primary	8	varchar(16)	YES	MUL		
+variant	grammar	9	varchar(64)	YES			
+variant	note	10	text	YES			
+variant_edition	variant_id	1	int unsigned	NO	PRI		
+variant_edition	edition_id	2	tinyint unsigned	NO	PRI		
+variant_edition	is_minor	3	tinyint(1)	NO		0	
+verse	id	1	int unsigned	NO	PRI		auto_increment
+verse	book_id	2	tinyint unsigned	NO	MUL		
+verse	chapter	3	smallint unsigned	NO			
+verse	verse	4	smallint unsigned	NO			
+verse	osis_ref	5	varchar(24)	NO			
+verse	raw_ref	6	varchar(64)	NO			
+verse	text_original	7	mediumtext	NO			
+verse	text_english	8	mediumtext	NO			
+verse	word_count	9	smallint unsigned	NO		0	
+verse	has_significant_variant	10	tinyint(1)	NO	MUL	0	
+verse	text_search	11	text	YES			
+verse_summary	id	1	int unsigned	NO	PRI		auto_increment
+verse_summary	verse_id	2	int unsigned	NO	MUL		
+verse_summary	block_num	3	tinyint unsigned	NO			
+verse_summary	original_line	4	mediumtext	NO			
+verse_summary	translation	5	mediumtext	NO			
+verse_summary	grammar	6	mediumtext	NO			
+verse_summary	sig_variant	7	mediumtext	YES			
+word	id	1	int unsigned	NO	PRI		auto_increment
+word	verse_id	2	int unsigned	NO	MUL		
+word	book_id	3	tinyint unsigned	NO	MUL		
+word	chapter	4	smallint unsigned	NO			
+word	verse	5	smallint unsigned	NO			
+word	position	6	smallint unsigned	NO			
+word	word_num	7	smallint unsigned	NO			
+word	chunk_num	8	tinyint unsigned	NO		1	
+word	source_type	9	varchar(32)	NO			
+word	is_variant_marked	10	tinyint(1)	NO		0	
+word	language	11	enum('Hebrew','Greek')	NO	MUL		
+word	text_original	12	varchar(255)	YES			
+word	transliteration	13	varchar(255)	YES			
+word	translation	14	varchar(255)	YES	MUL		
+word	strongs	15	varchar(128)	YES			
+word	strongs_primary	16	varchar(16)	YES	MUL		
+word	grammar	17	varchar(64)	YES			
+word	dictionary_form	18	varchar(255)	YES			
+word	submeaning	19	varchar(255)	YES			
+word	sstrong_instance	20	varchar(32)	YES			
+word	text_search	21	varchar(150)	YES	MUL		
+word_alt_strong	id	1	int unsigned	NO	PRI		auto_increment
+word_alt_strong	word_id	2	int unsigned	NO	MUL		
+word_alt_strong	alt_strong	3	varchar(32)	NO	MUL		
+word_edition	word_id	1	int unsigned	NO	PRI		
+word_edition	edition_id	2	tinyint unsigned	NO	PRI		
+word_edition	is_minor	3	tinyint(1)	NO		0	
+word_link	id	1	int unsigned	NO	PRI		auto_increment
+word_link	word_id	2	int unsigned	NO	MUL		
+word_link	target_word_id	3	int unsigned	YES	MUL		
+word_link	target_word_num	4	smallint unsigned	NO			
+word_link	target_strong	5	varchar(16)	YES			
+word_link	direction	6	enum('forward','backward')	NO			
+word_morpheme	id	1	int unsigned	NO	PRI		auto_increment
+word_morpheme	word_id	2	int unsigned	NO	MUL		
+word_morpheme	morpheme_num	3	tinyint unsigned	NO			
+word_morpheme	role	4	enum('prefix','root','suffix','punctuation')	NO	MUL		
+word_morpheme	strong_code	5	varchar(16)	NO	MUL		
+word_morpheme	hebrew	6	varchar(64)	YES			
+word_morpheme	gloss	7	varchar(255)	YES			
+word_morpheme	submeaning	8	varchar(255)	YES			

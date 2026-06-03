@@ -26,20 +26,32 @@ function remote_api_base(): string {
     return $base;
 }
 
-function remote_api_call(string $endpoint, array $params = []): ?array {
-    $url = remote_api_base() . '/api.php?' . http_build_query(array_merge(['api' => $endpoint], $params));
+function remote_api_call(string $endpoint, array $params = [], string $method = 'GET', array $postData = []): ?array {
+    $base = remote_api_base();
+    $url = $base . '/api.php?' . http_build_query(array_merge(['api' => $endpoint], $params));
 
-    $context = stream_context_create([
+    $opts = [
         'http' => [
+            'method' => $method,
             'timeout' => 10,
             'ignore_errors' => true,
+            'header' => "Accept: application/json\r\n",
         ]
-    ]);
+    ];
+
+    if (strtoupper($method) === 'POST') {
+        $body = http_build_query($postData);
+        $opts['http']['content'] = $body;
+        $opts['http']['header'] .= "Content-Type: application/x-www-form-urlencoded\r\n";
+        $opts['http']['header'] .= "Content-Length: " . strlen($body) . "\r\n";
+    }
+
+    $context = stream_context_create($opts);
 
     $response = @file_get_contents($url, false, $context);
 
     if ($response === false) {
-        error_log("Remote API call failed: $url");
+        error_log("Remote API call failed: $url (method $method)");
         return null;
     }
 
@@ -162,3 +174,14 @@ function remote_els_fetch(string $book, int $chapter, int $verse, string $editio
         'letters' => $letters,
     ]);
 }
+
+// Verse notes (collaborative) - GET list is public; writes are proxied with user context
+function remote_verse_notes(string $book, int $chapter, int $verse): ?array {
+    return remote_api_call('verse_notes', [
+        'book'    => $book,
+        'chapter' => $chapter,
+        'verse'   => $verse,
+    ]);
+}
+
+// For writes we use the generic remote_api_call(..., 'POST', $data) from api.php proxy layer.

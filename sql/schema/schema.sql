@@ -44,6 +44,9 @@ DROP TABLE IF EXISTS verse_summary;
 DROP TABLE IF EXISTS verse;
 DROP TABLE IF EXISTS edition;
 DROP TABLE IF EXISTS book;
+-- Note-type junction (depends on verse_notes and note_type, must drop before them)
+DROP TABLE IF EXISTS verse_note_types;
+DROP TABLE IF EXISTS note_type;
 
 -- ---------------------------------------------------------------------
 -- book: 66 rows. Populated by the Python loader (BOOKS list).
@@ -306,3 +309,82 @@ SELECT  v.id           AS verse_id,
         v.has_significant_variant
 FROM verse v
 JOIN book  b ON b.id = v.book_id;
+
+-- ---------------------------------------------------------------------
+-- user_notes: per-user formatted notes / personal notebook.
+-- The notes field stores BBCode (or simple markup) entered by the user.
+-- user_id is intended to match the external phpBB `users.user_id` when
+-- phpBB session integration is enabled (see web/config.php 'phpbb_path').
+-- For standalone/dev use a dev fallback (session based) is provided.
+-- One row per user (the user's entire notebook as one rich text document).
+-- ---------------------------------------------------------------------
+CREATE TABLE user_notes (
+    user_id      INT UNSIGNED NOT NULL PRIMARY KEY,
+    notes        TEXT NULL,
+    updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------
+-- verse_notes: collaborative per-verse notes / commentary.
+-- Each user can add any number of notes linked to a specific verse.
+-- Titles are required (NOT NULL) so users can distinguish multiple notes
+-- on the same verse (e.g. one for word 913 "first word", another for 703
+-- "last two words").
+-- Note types are managed via the note_type + verse_note_types junction tables
+-- (many-to-many: one note can be tagged General, BW, IBC, Gematria, etc.).
+-- gem_* fields are populated for Gematria-type notes (autofilled from
+-- verse words or user selection at create time).
+-- username is denormalized at create time for display (since user table
+-- lives in external phpBB).
+-- All notes are public / visible to everyone (Bible commentary).
+-- ---------------------------------------------------------------------
+CREATE TABLE verse_notes (
+    id           INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    user_id      INT UNSIGNED NOT NULL,
+    username     VARCHAR(100) NOT NULL,
+    book_code    VARCHAR(10) NOT NULL,
+    chapter      SMALLINT UNSIGNED NOT NULL,
+    verse        SMALLINT UNSIGNED NOT NULL,
+    title        VARCHAR(255) NOT NULL,
+    note_text    TEXT NOT NULL,
+    gem_std      INT NULL,
+    gem_ord      INT NULL,
+    gem_red      INT NULL,
+    created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_vn_verse (book_code, chapter, verse),
+    KEY idx_vn_user (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------
+-- note_type: lookup table for note classification tags.
+-- Fixed set: General, BW (Bible Wheel), IBC (Isaiah-Bible Correlation),
+-- Gematria. New types can be added here without schema changes.
+-- ---------------------------------------------------------------------
+CREATE TABLE note_type (
+    id     TINYINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    name   VARCHAR(30) NOT NULL,
+    label  VARCHAR(80) NOT NULL,
+    UNIQUE KEY uq_note_type_name (name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Seed the four standard types.
+INSERT INTO note_type (id, name, label) VALUES
+    (1, 'General',  'General (commentary)'),
+    (2, 'BW',       'Bible Wheel'),
+    (3, 'IBC',      'Isaiah-Bible Correlation'),
+    (4, 'Gematria', 'Gematria');
+
+-- ---------------------------------------------------------------------
+-- verse_note_types: many-to-many junction between verse_notes and note_type.
+-- A single note can carry multiple type tags (e.g. BW + Gematria).
+-- Deletes cascade when the note is deleted.
+-- ---------------------------------------------------------------------
+CREATE TABLE verse_note_types (
+    note_id  INT UNSIGNED NOT NULL,
+    type_id  TINYINT UNSIGNED NOT NULL,
+    PRIMARY KEY (note_id, type_id),
+    KEY idx_vnt_type (type_id),
+    CONSTRAINT fk_vnt_note FOREIGN KEY (note_id) REFERENCES verse_notes (id) ON DELETE CASCADE,
+    CONSTRAINT fk_vnt_type FOREIGN KEY (type_id) REFERENCES note_type (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

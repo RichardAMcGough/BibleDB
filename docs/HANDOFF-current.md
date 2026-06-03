@@ -4,6 +4,8 @@
 
 The original `HANDOFF.md` contains a lot of historical session notes. This file focuses on the current state, conventions, and the easiest ways to work with the project.
 
+**For very long conversations:** See `docs/NEW_SESSION_STARTER.md` for the best way to start a fresh session with good context.
+
 ---
 
 ## Core Principle: Single Source of Truth for Database Name
@@ -240,4 +242,64 @@ For day-to-day work or onboarding, prefer this file (`HANDOFF-current.md`).
 
 ---
 
-**Last major update:** Added `scripts/run_pipeline.py` orchestrator. NA27, Scrivener TR, and KJV now load from SQL dumps in `data/raw/` (the old `import_bw_bibles.py` was removed). `fix_kjv_versification.py` handles the five NA28↔KJV verse-numbering anomalies (Rev 12:18, Php 1:16/1:17, 2Co 13:13, 3Jn 1:15).
+**Last major update:** Data folder (`data/`) added to the repository with Git LFS for the large source files and SQL dumps (required for running the pipeline out-of-the-box). Previous major work: full collaborative verse notes system (with phpBB editor reuse, edit-existing + "Create new note", CSRF protection, remote API parity/proxy, delete support, length validation, renderer fixes).
+
+## Collaborative per-verse notes / commentary (with gematria autofill)
+
+Each user (via phpBB integration or dev fallback) can create any number of notes linked to specific verses. Notes are public and visible to all (for building a shared Bible commentary).
+
+- Table `verse_notes` is ensured by the pipeline (run `python scripts/run_pipeline.py --db-name yourdb` to create on existing DBs; new DBs get it from schema.sql).
+- On verse pages (index.php), each verse number has a "+ note" button.
+- Modal behavior (title is **required**, never optional):
+  - If you already have one or more notes on this verse, clicking + note pre-fills the form in **edit mode** using your most recent note (so a single growing note per verse is the common case).
+  - A "Create new note" button appears; click it to clear the form for an additional note on the same verse (distinguished by its title, e.g. "First word 913" vs "Last two words 703").
+  - Your own notes in the "Existing notes" list below the form get an [edit] button to load any of them into the form.
+  - note_type: general (commentary) or gematria
+  - title (required — used to distinguish multiple notes for same verse)
+  - note_text (BBCode supported via toolbar that reuses phpBB's editor.js insertion logic + caret handling for consistency with forum posts; same toolbar also powers the personal notebook)
+  - For gematria type: gem_std/ord/red fields with buttons to autopopulate:
+    - "Fill from verse": sums gem values of all words in that verse block (using data-gem-* attrs on .word-cell, which come from gematria_word).
+    - "Fill from selection": sums only currently selected words (reuses the S+drag selection UI and gem data already powering the gematria panel).
+- Existing notes for the verse are listed in the modal (titles are prominent for distinction; username, type, rendered BBCode). Your notes are editable from the list or auto-loaded.
+- Count badges (N) appear next to verse numbers; clicking them opens the modal (edit or create as appropriate).
+- Save uses `api.php?api=create_verse_note` or `update_verse_note` (POST). On success the list + count badge refresh in-place (no full reload).
+- Listing via `api.php?api=verse_notes`.
+- Title column is NOT NULL in schema + pipeline (with migration that backfills legacy empty titles using "Note <id>").
+- The personal notebook (`notes.php` + old user_notes table) remains separate for private scratchpad use.
+
+Configure `'phpbb_path'` in web/config.php for real user IDs/usernames from your forum (light bootstrap only for notes feature; no heavy integration required on every page). Dev fallback uses session.
+
+This fulfills per-user multiple notes (with required titles for distinction), auto edit-existing on +note click + explicit "Create new note", verse-linked storage for commentary, edit/update/delete flow, CSRF protection on mutating endpoints, remote-API parity (proxied reads/writes so `use_remote_api` dev mode works for notes too), phpBB editor.js reuse for input, and gematria value autofill from verse/selected words. `fix_kjv_versification.py` handles the five NA28↔KJV verse-numbering anomalies (Rev 12:18, Php 1:16/1:17, 2Co 13:13, 3Jn 1:15).
+
+### Post-deploy / architecture notes (from review)
+- CSRF tokens are per-session (generated on first access to a notes page). API POSTs for notes (create/update/delete) and the personal notebook form POST validate it (via meta tag for JS, hidden input for forms, or X-CSRF-Token header).
+- Remote proxy for verse_notes: when `use_remote_api=true`, GET lists and (create/update/delete) POSTs are forwarded via `remote_api_call` (with `proxy_user_*` for authorship on writes). The receiving live instance trusts the proxy context for user attribution (normal browser posts to live still use phpBB session).
+- `user_notes` (personal) remain local-only (scratchpad); `verse_notes` are the public/collaborative ones. They are intentionally separate for MVP (see discussion below).
+- Dev fallback (id 999999) shares state across "users" on that machine — documented as dev-only.
+- `get_bible_user()` (and thus CSRF token gen) must be called before output to avoid "headers already sent" on session_start.
+- Username is denormalized at create time (audit choice). Renames in phpBB won't update historical notes.
+- The two stores don't auto-sync (adding via modal doesn't populate personal notebook). Possible futures: keep separate, unify under verse_notes, or add "my verse notes" view in notebook.
+- List regex and basic BBCode renderer are sufficient for common use; advanced nesting in lists or heavy use may need a real parser later.
+- Added length caps (title 255, text ~64k) with 400 errors + client pre-checks. Delete support added symmetrically (owner only, CSRF, remote proxy, UI button next to "edit" in modal list).
+- `save_user_notes` uses modern INSERT ... AS new ON DUPLICATE syntax.
+- `bbcode_to_html` now masks [code] regions before nl2br to avoid <br> inside <pre>.
+
+## Latest (as of 2026-06-02)
+
+### Notes modal UX overhaul (committed this session)
+The verse-notes modal popup was significantly improved:
+
+- **Collapsed form by default when notes exist**: Opening the modal now shows only the existing notes list. The add/edit form is hidden until needed, so the user's first view is the rendered notes.
+- **"+ Add Note" button in header**: Added to the title bar next to the × close button. Opens the blank form for a new note.
+- **Long book name in title**: Modal header now shows the full book name (e.g. "Genesis" not "Gen") pulled from the book selector's `data-full` attribute.
+- **Edit/Delete buttons on the title line**: Each note's title line shows the note title, type tags, author, date, and then (for own notes) **Edit** / **Delete** buttons inline — no separate row below the note body.
+- **Notes render fully, no internal scrollbar**: The notes list no longer has `max-height` or its own scroll. Notes render top-to-bottom in full, and the modal itself scrolls as a unit.
+- **Title field**: Label simplified to `Title *` (red asterisk). The HTML `required` attribute was replaced with a JS `setCustomValidity` check that shows a descriptive inline tooltip: *"A title is required. Use something descriptive like 'First word 913' or 'Aleph connection' to identify this note."* Clears automatically when the user starts typing.
+- **Cancel closes form only** (not the whole modal) when existing notes are present.
+- **After save**: Form collapses back to the notes list view.
+- **No notes yet**: Form opens immediately (no point showing an empty list first).
+
+**To pick up in a brand new session:** Read this entire file first, then ask the AI to focus on the specific next item.
+
+## Recommendation on long sessions
+For best results, start a fresh conversation and paste the key parts of this HANDOFF (or just say "read docs/HANDOFF-current.md and tell me the current state"). Fresh sessions tend to stay sharper on complex projects like this.

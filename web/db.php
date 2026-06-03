@@ -4,6 +4,22 @@
 
 require_once __DIR__ . '/remote_api.php';
 
+/**
+ * Start the PHP session safely.
+ * If the configured session.save_path doesn't exist (e.g. a cPanel Linux path
+ * on a Windows dev machine), fall back to sys_get_temp_dir() before starting.
+ */
+if (!function_exists('_start_session_safe')) {
+    function _start_session_safe(): void {
+        if (session_status() !== PHP_SESSION_NONE) return;
+        $path = session_save_path();
+        if ($path !== '' && !is_dir($path)) {
+            session_save_path(sys_get_temp_dir());
+        }
+        session_start();
+    }
+}
+
 function bible_pdo(): PDO {
     // Guard: never allow local DB access when remote API mode is enabled.
     if (should_use_remote_api()) {
@@ -87,6 +103,305 @@ function should_use_remote_api(): bool {
     }
 
     return $use_remote;
+}
+
+// ===================================================================
+// User context for per-user features (notes etc.)
+// ===================================================================
+
+/**
+ * Get the current user for per-user features like notes.
+ * Tries to bootstrap a phpBB session if 'phpbb_path' is configured in config.php
+ * and the common.php is present. Falls back to a dev PHP session (demo user).
+ * Returns array with 'id', 'name', 'is_guest'.
+ * (Renamed from get_current_user to avoid collision with PHP built-in.)
+ */
+function get_bible_user(): array {
+    static $u = null;
+    if ($u !== null) return $u;
+
+    $cfg_path = __DIR__ . '/config.php';
+    $cfg = file_exists($cfg_path) ? require $cfg_path : [];
+
+    $phpbb_path = rtrim($cfg['phpbb_path'] ?? '', '/\\');
+    if ($phpbb_path !== '') {
+        $phpbb_path .= '/';
+    }
+
+    if ($phpbb_path && file_exists($phpbb_path . 'common.php')) {
+        // Lightweight phpBB session bootstrap just for identity.
+        if (!defined('IN_PHPBB')) {
+            define('IN_PHPBB', true);
+        }
+        global $phpbb_root_path, $phpEx, $user, $auth;
+        $phpbb_root_path = $phpbb_path;
+        $phpEx = 'php';
+        // Include only if not already bootstrapped by an outer header.
+        if (!isset($user) || !is_object($user) || !method_exists($user, 'session_begin')) {
+            require $phpbb_root_path . 'common.php';
+        }
+        if (isset($user) && method_exists($user, 'session_begin')) {
+            $user->session_begin();
+            if (isset($auth) && method_exists($auth, 'acl')) {
+                $auth->acl($user->data);
+            }
+            $uid = (int)($user->data['user_id'] ?? 0);
+            $uname = $user->data['username'] ?? 'User';
+            $u = [
+                'id'       => $uid,
+                'name'     => $uname,
+                'is_guest' => ($uid <= 1), // phpBB ANONYMOUS is usually 1
+            ];
+            return $u;
+        }
+    }
+
+    // Standalone / dev fallback: use PHP session so notes work without phpBB.
+    // WARNING: all "dev" visitors share user id 999999 and can edit each others' notes.
+    // This is intentional for local testing only; production requires phpbb_path for real per-user isolation.
+    // Also: this session_start() must happen before any output is sent (call get_bible_user() early).
+    _start_session_safe();
+    if (empty($_SESSION['bible_notes_user_id'])) {
+        $_SESSION['bible_notes_user_id'] = 999999; // high demo id to avoid real phpBB collisions
+        $_SESSION['bible_notes_username'] = 'Demo User (local dev)';
+    }
+    $u = [
+        'id'       => (int)$_SESSION['bible_notes_user_id'],
+        'name'     => $_SESSION['bible_notes_username'],
+        'is_guest' => false,
+    ];
+    return $u;
+}
+
+// ===================================================================
+// Per-user notes (local DB only - requires local mode + user context)
+// ===================================================================
+
+/**
+ * Fetch the current user's notes text (raw BBCode).
+ * Returns empty string if none or if remote mode.
+ */
+function get_user_notes(): string {
+    if (should_use_remote_api()) {
+        return '';
+    }
+    $u = get_bible_user();
+    if ($u['is_guest']) {
+        return '';
+    }
+    try {
+        $pdo = bible_pdo();
+        $stmt = $pdo->prepare("SELECT notes FROM user_notes WHERE user_id = ? LIMIT 1");
+        $stmt->execute([$u['id']]);
+        $row = $stmt->fetch();
+        return $row ? (string)$row['notes'] : '';
+    } catch (Throwable $e) {
+        error_log('get_user_notes error: ' . $e->getMessage());
+        return '';
+    }
+}
+
+/**
+ * Save/replace the current user's notes text.
+ * Returns true on success.
+ */
+function save_user_notes(string $notes): bool {
+    if (should_use_remote_api()) {
+        return false;
+    }
+    $u = get_bible_user();
+    if ($u['is_guest']) {
+        return false;
+    }
+    try {
+        $pdo = bible_pdo();
+        $stmt = $pdo->prepare("
+            INSERT INTO user_notes (user_id, notes) VALUES (?, ?)
+            AS new ON DUPLICATE KEY UPDATE notes = new.notes, updated_at = CURRENT_TIMESTAMP
+        ");
+        $stmt->execute([$u['id'], $notes]);
+        return true;
+    } catch (Throwable $e) {
+        error_log('save_user_notes error: ' . $e->getMessage());
+        return false;
+    }
+}
+
+// ===================================================================
+// Verse notes (collaborative commentary per verse, local DB only)
+// ===================================================================
+
+/**
+ * Fetch all notes for a specific verse (public, any user).
+ * Returns rows with id, user_id, username, title, note_text,
+ * gem_std/ord/red, created_at, updated_at, plus:
+ *   types     — array of type name strings, e.g. ['General','Gematria']
+ *   type_ids  — array of type id ints
+ * Ordered by created_at ASC.
+ */
+function get_verse_notes(string $book_code, int $chapter, int $verse): array {
+    if (should_use_remote_api()) {
+        $data = remote_verse_notes($book_code, $chapter, $verse);
+        if (is_array($data)) {
+            return $data;
+        }
+        return [];
+    }
+    try {
+        $pdo = bible_pdo();
+        $stmt = $pdo->prepare("
+            SELECT vn.id, vn.user_id, vn.username, vn.title, vn.note_text,
+                   vn.gem_std, vn.gem_ord, vn.gem_red, vn.created_at, vn.updated_at,
+                   GROUP_CONCAT(nt.name  ORDER BY nt.id SEPARATOR ',') AS types_csv,
+                   GROUP_CONCAT(nt.id    ORDER BY nt.id SEPARATOR ',') AS type_ids_csv
+            FROM verse_notes vn
+            LEFT JOIN verse_note_types vnt ON vnt.note_id = vn.id
+            LEFT JOIN note_type nt ON nt.id = vnt.type_id
+            WHERE vn.book_code = ? AND vn.chapter = ? AND vn.verse = ?
+            GROUP BY vn.id
+            ORDER BY vn.created_at ASC
+        ");
+        $stmt->execute([$book_code, $chapter, $verse]);
+        $rows = $stmt->fetchAll();
+        foreach ($rows as &$row) {
+            $row['types']    = $row['types_csv']    ? explode(',', $row['types_csv'])    : ['General'];
+            $row['type_ids'] = $row['type_ids_csv'] ? array_map('intval', explode(',', $row['type_ids_csv'])) : [1];
+            unset($row['types_csv'], $row['type_ids_csv']);
+        }
+        unset($row);
+        return $rows;
+    } catch (Throwable $e) {
+        error_log('get_verse_notes error: ' . $e->getMessage());
+        return [];
+    }
+}
+
+/**
+ * Create a new note for a verse.
+ * $user must come from get_bible_user().
+ * $type_ids is an array of note_type.id values (e.g. [1, 4] for General + Gematria).
+ * Defaults to [1] (General) if empty.
+ * Title is required (non-empty) to let users distinguish notes for the same verse.
+ */
+function create_verse_note(array $user, string $book_code, int $chapter, int $verse,
+                           array $type_ids, string $title, string $note_text,
+                           ?int $gem_std = null, ?int $gem_ord = null, ?int $gem_red = null): bool {
+    if (should_use_remote_api()) {
+        return false;
+    }
+    if ($user['is_guest']) {
+        return false;
+    }
+    // Sanitize type_ids: keep only positive ints; default to General (1) if none.
+    $type_ids = array_values(array_unique(array_filter(array_map('intval', $type_ids))));
+    if (empty($type_ids)) $type_ids = [1];
+    if (trim($title) === '') {
+        return false; // title required
+    }
+    if (strlen($title) > 255 || strlen($note_text) > 65535) {
+        return false;
+    }
+    try {
+        $pdo = bible_pdo();
+        $pdo->beginTransaction();
+        $stmt = $pdo->prepare("
+            INSERT INTO verse_notes
+                (user_id, username, book_code, chapter, verse, title, note_text,
+                 gem_std, gem_ord, gem_red)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ");
+        $stmt->execute([
+            $user['id'], $user['name'], $book_code, $chapter, $verse,
+            $title, $note_text,
+            $gem_std, $gem_ord, $gem_red
+        ]);
+        $note_id = (int)$pdo->lastInsertId();
+        $junc = $pdo->prepare('INSERT IGNORE INTO verse_note_types (note_id, type_id) VALUES (?, ?)');
+        foreach ($type_ids as $tid) {
+            $junc->execute([$note_id, $tid]);
+        }
+        $pdo->commit();
+        return true;
+    } catch (Throwable $e) {
+        try { $pdo->rollBack(); } catch (Throwable $re) {}
+        error_log('create_verse_note error: ' . $e->getMessage());
+        return false;
+    }
+}
+
+/**
+ * Update an existing note (only by owner).
+ * $type_ids replaces all existing type tags for this note.
+ */
+function update_verse_note(int $note_id, array $user, string $book_code, int $chapter, int $verse,
+                           array $type_ids, string $title, string $note_text,
+                           ?int $gem_std = null, ?int $gem_ord = null, ?int $gem_red = null): bool {
+    if (should_use_remote_api()) {
+        return false;
+    }
+    if ($user['is_guest']) {
+        return false;
+    }
+    $type_ids = array_values(array_unique(array_filter(array_map('intval', $type_ids))));
+    if (empty($type_ids)) $type_ids = [1];
+    if (empty($title)) {
+        return false; // title required
+    }
+    if (strlen($title) > 255 || strlen($note_text) > 65535) {
+        return false;
+    }
+    try {
+        $pdo = bible_pdo();
+        $pdo->beginTransaction();
+        $stmt = $pdo->prepare("
+            UPDATE verse_notes
+            SET title = ?, note_text = ?,
+                gem_std = ?, gem_ord = ?, gem_red = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND user_id = ?
+        ");
+        $stmt->execute([
+            $title, $note_text,
+            $gem_std, $gem_ord, $gem_red,
+            $note_id, $user['id']
+        ]);
+        if ($stmt->rowCount() === 0) {
+            $pdo->rollBack();
+            return false; // not owner or note doesn't exist
+        }
+        // Replace all type tags atomically.
+        $pdo->prepare('DELETE FROM verse_note_types WHERE note_id = ?')->execute([$note_id]);
+        $junc = $pdo->prepare('INSERT INTO verse_note_types (note_id, type_id) VALUES (?, ?)');
+        foreach ($type_ids as $tid) {
+            $junc->execute([$note_id, $tid]);
+        }
+        $pdo->commit();
+        return true;
+    } catch (Throwable $e) {
+        try { $pdo->rollBack(); } catch (Throwable $re) {}
+        error_log('update_verse_note error: ' . $e->getMessage());
+        return false;
+    }
+}
+
+/**
+ * Delete a verse note (only by owner).
+ */
+function delete_verse_note(int $note_id, array $user): bool {
+    if (should_use_remote_api()) {
+        return false;
+    }
+    if ($user['is_guest']) {
+        return false;
+    }
+    try {
+        $pdo = bible_pdo();
+        $stmt = $pdo->prepare("DELETE FROM verse_notes WHERE id = ? AND user_id = ?");
+        $stmt->execute([$note_id, $user['id']]);
+        return $stmt->rowCount() > 0;
+    } catch (Throwable $e) {
+        error_log('delete_verse_note error: ' . $e->getMessage());
+        return false;
+    }
 }
 
 // ===================================================================

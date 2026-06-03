@@ -10,9 +10,11 @@
 // any output before the header() call.
 
 require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/remote_api.php';
 require_once __DIR__ . '/book_aliases.php';
 require_once __DIR__ . '/search_lib.php';
 require_once __DIR__ . '/els_lib.php';
+require_once __DIR__ . '/helpers.php';
 
 header('Content-Type: application/json; charset=utf-8');
 try {
@@ -20,7 +22,8 @@ try {
         return $book !== '' && strpos($book, 'Lxx') === 0;
     };
 
-    switch ($_GET['api'] ?? '') {
+    $api = $_GET['api'] ?? $_POST['api'] ?? $_REQUEST['api'] ?? '';
+    switch ($api) {
         case 'books':
             echo json_encode(bible_books());
             break;
@@ -146,6 +149,244 @@ try {
                 break;
             }
             echo json_encode(els_fetch($book, $chap, $vrs, $edition, $letters));
+            break;
+
+        case 'verse_notes':
+            $book = trim($_GET['book'] ?? '');
+            $chap = (int)($_GET['chapter'] ?? 0);
+            $vrs  = (int)($_GET['verse'] ?? 0);
+            if (!$book || !$chap || !$vrs) {
+                http_response_code(400);
+                echo json_encode(['error' => 'book, chapter, verse required']);
+                break;
+            }
+            $notes = get_verse_notes($book, $chap, $vrs);
+            foreach ($notes as &$n) {
+                $n['rendered'] = bbcode_to_html($n['note_text']);
+            }
+            unset($n);
+            echo json_encode($notes);
+            break;
+
+        case 'create_verse_note':
+            $isProxy = !empty($_REQUEST['proxy_user_id']) && !empty($_REQUEST['proxy_username']);
+            if (!$isProxy && !validate_csrf_token()) {
+                http_response_code(403);
+                echo json_encode(['error' => 'csrf token validation failed']);
+                break;
+            }
+            // Resolve user: normal phpBB/dev session, or override from trusted proxy (remote dev instance)
+            if ($isProxy) {
+                $u = [
+                    'id'       => (int)$_REQUEST['proxy_user_id'],
+                    'name'     => trim($_REQUEST['proxy_username']),
+                    'is_guest' => false,
+                ];
+            } else {
+                $u = get_bible_user();
+            }
+            if ($u['is_guest']) {
+                http_response_code(403);
+                echo json_encode(['error' => 'login required to create notes']);
+                break;
+            }
+            $book   = trim($_REQUEST['book'] ?? '');
+            $chap   = (int)($_REQUEST['chapter'] ?? 0);
+            $vrs    = (int)($_REQUEST['verse'] ?? 0);
+            // note_type_ids: comma-separated type IDs from the checkboxes, e.g. "1,4"
+            $type_ids = array_values(array_filter(array_map('intval',
+                explode(',', $_REQUEST['note_type_ids'] ?? '1')
+            )));
+            if (empty($type_ids)) $type_ids = [1];
+            $title  = trim($_REQUEST['title'] ?? '');
+            $text   = trim($_REQUEST['note_text'] ?? '');
+            $gstd   = (($_REQUEST['gem_std'] ?? '') !== '') ? (int)$_REQUEST['gem_std'] : null;
+            $gord   = (($_REQUEST['gem_ord'] ?? '') !== '') ? (int)$_REQUEST['gem_ord'] : null;
+            $gred   = (($_REQUEST['gem_red'] ?? '') !== '') ? (int)$_REQUEST['gem_red'] : null;
+
+            if (!$book || !$chap || !$vrs || $title === '' || $text === '') {
+                http_response_code(400);
+                echo json_encode(['error' => 'book, chapter, verse, title, and note_text required']);
+                break;
+            }
+            if (strlen($title) > 255) {
+                http_response_code(400);
+                echo json_encode(['error' => 'title too long (maximum 255 characters)']);
+                break;
+            }
+            if (strlen($text) > 65535) {
+                http_response_code(400);
+                echo json_encode(['error' => 'note text too long (maximum 64KB)']);
+                break;
+            }
+
+            if (should_use_remote_api()) {
+                // Proxy to live site so remote-dev contributors see/create notes (parity with other features)
+                $proxyData = [
+                    'book'          => $book,
+                    'chapter'       => $chap,
+                    'verse'         => $vrs,
+                    'note_type_ids' => implode(',', $type_ids),
+                    'title'         => $title,
+                    'note_text'     => $text,
+                    'gem_std'       => $gstd !== null ? $gstd : '',
+                    'gem_ord'       => $gord !== null ? $gord : '',
+                    'gem_red'       => $gred !== null ? $gred : '',
+                    'proxy_user_id' => $u['id'],
+                    'proxy_username' => $u['name'],
+                ];
+                $resp = remote_api_call('create_verse_note', [], 'POST', $proxyData);
+                if ($resp && !empty($resp['success'])) {
+                    echo json_encode(['success' => true]);
+                } else {
+                    $err = (is_array($resp) && !empty($resp['error'])) ? $resp['error'] : 'remote note creation failed';
+                    echo json_encode(['error' => $err]);
+                }
+                break;
+            }
+
+            $ok = create_verse_note($u, $book, $chap, $vrs, $type_ids, $title, $text, $gstd, $gord, $gred);
+            if ($ok) {
+                echo json_encode(['success' => true]);
+            } else {
+                echo json_encode(['error' => 'failed to save note (db error or duplicate)']);
+            }
+            break;
+
+        case 'update_verse_note':
+            $isProxy = !empty($_REQUEST['proxy_user_id']) && !empty($_REQUEST['proxy_username']);
+            if (!$isProxy && !validate_csrf_token()) {
+                http_response_code(403);
+                echo json_encode(['error' => 'csrf token validation failed']);
+                break;
+            }
+            if ($isProxy) {
+                $u = [
+                    'id'       => (int)$_REQUEST['proxy_user_id'],
+                    'name'     => trim($_REQUEST['proxy_username']),
+                    'is_guest' => false,
+                ];
+            } else {
+                $u = get_bible_user();
+            }
+            if ($u['is_guest']) {
+                http_response_code(403);
+                echo json_encode(['error' => 'login required to update notes']);
+                break;
+            }
+            $note_id = (int)($_REQUEST['id'] ?? 0);
+            $book   = trim($_REQUEST['book'] ?? '');
+            $chap   = (int)($_REQUEST['chapter'] ?? 0);
+            $vrs    = (int)($_REQUEST['verse'] ?? 0);
+            $type_ids = array_values(array_filter(array_map('intval',
+                explode(',', $_REQUEST['note_type_ids'] ?? '1')
+            )));
+            if (empty($type_ids)) $type_ids = [1];
+            $title  = trim($_REQUEST['title'] ?? '');
+            $text   = trim($_REQUEST['note_text'] ?? '');
+            $gstd   = (($_REQUEST['gem_std'] ?? '') !== '') ? (int)$_REQUEST['gem_std'] : null;
+            $gord   = (($_REQUEST['gem_ord'] ?? '') !== '') ? (int)$_REQUEST['gem_ord'] : null;
+            $gred   = (($_REQUEST['gem_red'] ?? '') !== '') ? (int)$_REQUEST['gem_red'] : null;
+
+            if (!$note_id || !$book || !$chap || !$vrs || !$title || $text === '') {
+                http_response_code(400);
+                echo json_encode(['error' => 'id, book, chapter, verse, title, and note_text required']);
+                break;
+            }
+            if (strlen($title) > 255) {
+                http_response_code(400);
+                echo json_encode(['error' => 'title too long (maximum 255 characters)']);
+                break;
+            }
+            if (strlen($text) > 65535) {
+                http_response_code(400);
+                echo json_encode(['error' => 'note text too long (maximum 64KB)']);
+                break;
+            }
+
+            if (should_use_remote_api()) {
+                $proxyData = [
+                    'id'            => $note_id,
+                    'book'          => $book,
+                    'chapter'       => $chap,
+                    'verse'         => $vrs,
+                    'note_type_ids' => implode(',', $type_ids),
+                    'title'         => $title,
+                    'note_text'     => $text,
+                    'gem_std'       => $gstd !== null ? $gstd : '',
+                    'gem_ord'       => $gord !== null ? $gord : '',
+                    'gem_red'       => $gred !== null ? $gred : '',
+                    'proxy_user_id' => $u['id'],
+                    'proxy_username' => $u['name'],
+                ];
+                $resp = remote_api_call('update_verse_note', [], 'POST', $proxyData);
+                if ($resp && !empty($resp['success'])) {
+                    echo json_encode(['success' => true]);
+                } else {
+                    $err = (is_array($resp) && !empty($resp['error'])) ? $resp['error'] : 'remote note update failed';
+                    echo json_encode(['error' => $err]);
+                }
+                break;
+            }
+
+            $ok = update_verse_note($note_id, $u, $book, $chap, $vrs, $type_ids, $title, $text, $gstd, $gord, $gred);
+            if ($ok) {
+                echo json_encode(['success' => true]);
+            } else {
+                echo json_encode(['error' => 'failed to update note (not owner or db error)']);
+            }
+            break;
+
+        case 'delete_verse_note':
+            $isProxy = !empty($_REQUEST['proxy_user_id']) && !empty($_REQUEST['proxy_username']);
+            if (!$isProxy && !validate_csrf_token()) {
+                http_response_code(403);
+                echo json_encode(['error' => 'csrf token validation failed']);
+                break;
+            }
+            if ($isProxy) {
+                $u = [
+                    'id'       => (int)$_REQUEST['proxy_user_id'],
+                    'name'     => trim($_REQUEST['proxy_username']),
+                    'is_guest' => false,
+                ];
+            } else {
+                $u = get_bible_user();
+            }
+            if ($u['is_guest']) {
+                http_response_code(403);
+                echo json_encode(['error' => 'login required to delete notes']);
+                break;
+            }
+            $note_id = (int)($_REQUEST['id'] ?? 0);
+            if (!$note_id) {
+                http_response_code(400);
+                echo json_encode(['error' => 'id required']);
+                break;
+            }
+
+            if (should_use_remote_api()) {
+                $proxyData = [
+                    'id' => $note_id,
+                    'proxy_user_id' => $u['id'],
+                    'proxy_username' => $u['name'],
+                ];
+                $resp = remote_api_call('delete_verse_note', [], 'POST', $proxyData);
+                if ($resp && !empty($resp['success'])) {
+                    echo json_encode(['success' => true]);
+                } else {
+                    $err = (is_array($resp) && !empty($resp['error'])) ? $resp['error'] : 'remote note delete failed';
+                    echo json_encode(['error' => $err]);
+                }
+                break;
+            }
+
+            $ok = delete_verse_note($note_id, $u);
+            if ($ok) {
+                echo json_encode(['success' => true]);
+            } else {
+                echo json_encode(['error' => 'failed to delete note (not owner or db error)']);
+            }
             break;
 
         // New coarse-grained endpoint for remote dev use

@@ -311,6 +311,8 @@ a.gem-factor-link:hover { border-bottom-style: solid; }
 }
 .verse-num-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
 .verse-order { font-size: 10px; font-weight: 400; color: var(--muted); line-height: 1; }
+/* Note count below the + note button — same weight/size as the verse ordinal (#1) */
+.verse-notes-count { font-size: 10px; font-weight: 400; color: var(--muted); line-height: 1; }
 
 .word-cell {
     text-align: center;
@@ -998,3 +1000,52 @@ main.bible-main {
     font-size: 12px; color: var(--muted);
     min-width: 28px; display: inline-block;
 }
+
+/* -- ABBC3-style BBCode toolbar -------------------------------------- */
+.abbc3-toolbar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 2px;
+    background: linear-gradient(to bottom, #f9fbfd 0%, #d9dde2 100%);
+    border: 1px solid #b4bac0; border-radius: 3px;
+    padding: 3px 4px; margin: 4px 0 6px; position: relative;
+    box-sizing: border-box; width: 100%;
+}
+.abbc3-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 26px; height: 26px; padding: 0 4px;
+    background: transparent; border: 1px solid transparent;
+    border-radius: 2px; cursor: pointer; font-size: 12px; color: #333;
+    line-height: 1; vertical-align: middle; white-space: nowrap;
+    -webkit-user-select: none; user-select: none;
+}
+.abbc3-btn:hover, .abbc3-btn:focus {
+    background: #fff; border-color: #b4bac0; color: #111;
+    outline: none;
+}
+.abbc3-btn .fa { font-size: 13px; }
+.abbc3-btn-text { font-size: 11px; font-weight: bold; padding: 0 5px; }
+.abbc3-sep { width: 1px; height: 20px; background: #c0c4ca; margin: 0 3px; }
+.abbc3-size-sel {
+    height: 24px; font-size: 11px; border: 1px solid #b4bac0;
+    background: #fff; border-radius: 2px; cursor: pointer;
+    padding: 0 2px; vertical-align: middle; color: #333;
+    width: auto; flex-shrink: 0;
+}
+/* Group that holds color+size+copy/paste — keeps them on the same line */
+.abbc3-group {
+    display: inline-flex; align-items: center; gap: 2px; flex-shrink: 0;
+}
+/* Color picker */
+.abbc3-color-wrap { position: relative; display: inline-block; }
+#abbc3_palette {
+    display: none; position: absolute; top: 100%; left: 0; z-index: 9999;
+    background: #fff; border: 1px solid #b4bac0; border-radius: 3px;
+    padding: 5px; box-shadow: 2px 3px 8px rgba(0,0,0,.25);
+}
+.abbc3-palette-grid {
+    display: grid; grid-template-columns: repeat(8, 20px); gap: 2px;
+}
+.abbc3-swatch {
+    display: block; width: 20px; height: 20px; border-radius: 2px;
+    cursor: pointer; border: 1px solid rgba(0,0,0,.2);
+}
+.abbc3-swatch:hover { transform: scale(1.2); border-color: #333; }

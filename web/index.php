@@ -65,6 +65,9 @@ $subverse = (string)($_GET['subverse'] ?? '');
 // Record visit and fetch counts (silently fails if DB unavailable)
 $view_counts = record_verse_view($book_code, (int)$chapter, (int)$verse);
 
+// Current user for notes (phpBB or dev fallback). Needed for edit ownership.
+$user = get_bible_user();
+
 // Edition dropdown. OT Hebrew books get BHS + LXX-Rahlfs; NT + LXX books
 // get NA28 + TR + LXX-Rahlfs. LXX-Rahlfs is a mode switch that routes
 // lookups to the book_lxx / verse_lxx / word_lxx tables.
@@ -210,8 +213,10 @@ $next = $lxx_mode
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="author" content="Richard Amiel McGough">
+<?php emit_csrf_meta(); ?>
 <title>Bible Browser — <?= h($book_code) ?> <?= (int)$chapter ?>:<?= (int)$verse ?><?= $actual_count > 1 ? '-' . (int)$last_verse_num : '' ?></title>
 <?php bible_render_layout_styles(); ?>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
 </head>
 <body>
 
@@ -401,8 +406,12 @@ if ($actual_count > 0) {
                     ? kjv_verse_order((int)$v['book_id'], (int)$v['chapter'], (int)$v['verse'])
                     : null;
     ?>
-        <div class="verse-block">
-        <div class="verse-num"><?= $is_title ? '<span class="verse-num-title">title</span>' : (int)$v['verse'] ?><?php if ($vorder !== null): ?><span class="verse-order">#<?= $vorder ?></span><?php endif; ?></div>
+        <div class="verse-block" data-book="<?= h($v['osis_code'] ?? $book_code) ?>" data-chapter="<?= (int)$v['chapter'] ?>" data-verse="<?= (int)$v['verse'] ?>">
+        <div class="verse-num">
+            <?= $is_title ? '<span class="verse-num-title">title</span>' : (int)$v['verse'] ?><?php if ($vorder !== null): ?><span class="verse-order">#<?= $vorder ?></span><?php endif; ?>
+            <button type="button" class="add-note-btn" title="Add a note / commentary for this verse (gematria notes can autofill from selection or verse)">+ note</button>
+            <span class="verse-notes-count" data-count="0"></span>
+        </div>
         <?php foreach ($words as $w): $word_pos++;
             if ($lang === 'Greek') {
                 [$orig_display, $translit] = split_greek_word($w['text_original']);
@@ -457,6 +466,54 @@ if ($actual_count > 0) {
     <?php endforeach; ?>
     </div>
 
+    <!-- Notes modal / form (injected for verse commentary) -->
+    <div id="notes-modal" class="notes-modal" hidden>
+        <div class="notes-modal-inner">
+            <div class="notes-modal-head">
+                <h3 id="notes-modal-title">Notes for <span id="notes-verse-ref"></span></h3>
+                <div class="notes-head-actions">
+                    <button type="button" id="notes-add-btn" class="notes-add-btn">+ Add Note</button>
+                    <button type="button" id="notes-modal-close" class="notes-close">×</button>
+                </div>
+            </div>
+            <div id="notes-form-wrap">
+            <form id="notes-form" name="notesform">
+                <input type="hidden" id="notes-book">
+                <input type="hidden" id="notes-chapter">
+                <input type="hidden" id="notes-verse">
+                <label>Type (select all that apply):</label>
+                <div class="notes-type-checks">
+                    <label><input type="checkbox" class="notes-type-cb" value="1" checked> General (commentary)</label>
+                    <label><input type="checkbox" class="notes-type-cb" value="2"> Bible Wheel</label>
+                    <label><input type="checkbox" class="notes-type-cb" value="3"> Isaiah-Bible Correlation</label>
+                    <label><input type="checkbox" class="notes-type-cb" value="4"> Gematria</label>
+                </div>
+                <label>Title <span style="color:red" aria-hidden="true">*</span> <input type="text" id="notes-title" placeholder="e.g. First word 913"></label>
+                <label>Note text (toolbar uses the same editor as phpBB forum posts):</label>
+                <?= render_bbcode_toolbar('notesform', 'message') ?>
+                <textarea id="notes-text" name="message" rows="8" placeholder="Your commentary or gematria observation..." onfocus="if(typeof initInsertions==='function')try{initInsertions();}catch(e){}" onclick="if(typeof storeCaret==='function')storeCaret(this);" onkeyup="if(typeof storeCaret==='function')storeCaret(this);"></textarea>
+                <div id="notes-gem-section" hidden>
+                    <div>Gematria values (autofilled):</div>
+                    <label>Std: <input type="number" id="notes-gem-std" size="6"></label>
+                    <label>Ord: <input type="number" id="notes-gem-ord" size="6"></label>
+                    <label>Red: <input type="number" id="notes-gem-red" size="6"></label>
+                    <button type="button" id="notes-fill-verse">Fill from verse</button>
+                    <button type="button" id="notes-fill-sel">Fill from selection</button>
+                </div>
+                <div class="notes-actions">
+                    <button type="submit" id="notes-submit">Save Note</button>
+                    <button type="button" id="notes-cancel">Cancel</button>
+                    <button type="button" id="notes-create-new" style="display:none; margin-left:12px;">Create new note</button>
+                </div>
+            </form>
+            </div><!-- /notes-form-wrap -->
+            <div id="notes-existing">
+                <h4>Existing notes for this verse</h4>
+                <div id="notes-list"></div>
+            </div>
+        </div>
+    </div>
+
     <div class="word-detail" id="word-detail">
         <div class="wd-head">
             <h3 id="wd-title"></h3>
@@ -477,6 +534,39 @@ if ($actual_count > 0) {
 </div>
 
 <script id="word-data" type="application/json"><?= json_encode($detail_payload, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?></script>
+<style>
+.notes-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 10000; display: flex; align-items: center; justify-content: center; }
+.notes-modal[hidden] { display: none !important; }
+.notes-modal-inner { background: #fff; border: 1px solid #ccc; border-radius: 6px; width: 80vw; max-width: none; max-height: 80vh; overflow: auto; padding: 12px 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); font-size: 13px; }
+.notes-modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.notes-close { font-size: 18px; background: none; border: none; cursor: pointer; }
+.notes-head-actions { display: flex; align-items: center; gap: 6px; }
+.notes-add-btn { font-size: 12px; padding: 3px 10px; cursor: pointer; }
+#notes-form-wrap[hidden] { display: none !important; }
+#notes-form label { display: block; margin: 6px 0 2px; font-size: 11px; }
+/* The blanket `select` rule must exclude .abbc3-size-sel, otherwise
+   `width:100%` overrides the toolbar's `width:auto` and stretches the
+   size dropdown to fill its flex row, breaking the toolbar layout. */
+#notes-form input[type=text], #notes-form select:not(.abbc3-size-sel), #notes-form textarea { width: 100%; box-sizing: border-box; }
+#notes-gem-section { background: #f8f8f8; padding: 6px; margin: 6px 0; border-radius: 3px; }
+.notes-actions { margin-top: 8px; }
+.notes-actions button { margin-right: 6px; }
+#notes-list { padding: 4px 0; font-size: 13px; }
+#notes-list .note-item { border-bottom: 1px solid #f0f0f0; padding: 6px 0; }
+#notes-list .note-item:last-child { border-bottom: none; }
+.note-title-line { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 4px; margin-bottom: 4px; }
+.note-date { color: #888; font-size: 11px; }
+.note-action-btn { font-size: 10px; padding: 1px 6px; margin-left: 4px; cursor: pointer; }
+.delete-note-btn { color: #b00; }
+.note-body { line-height: 1.5; }
+.add-note-btn { font-size: 10px; padding: 1px 4px; vertical-align: middle; margin-left: 4px; cursor: pointer; }
+.verse-notes-count { cursor: pointer; }
+/* notes-type checkbox row */
+.notes-type-checks { display:flex; flex-wrap:wrap; gap:8px 16px; margin:4px 0 6px; }
+.notes-type-checks label { font-weight:normal; font-size:12px; display:flex; align-items:center; gap:4px; cursor:pointer; }
+/* type tag badges shown in rendered notes list */
+.note-type-tag { display:inline-block; font-size:10px; padding:1px 5px; border-radius:3px; background:#dde4f0; color:#445; margin-right:2px; vertical-align:middle; }
+</style>
 <script>
 const VERSE_LANG = <?= json_encode($primary_lang) ?>;
 const VERSE_REF  = <?= json_encode($range_ref_str) ?>;
@@ -527,6 +617,15 @@ const VERSE_REF  = <?= json_encode($range_ref_str) ?>;
 <script src="js/strongs-tooltip.js"></script>
 <script src="js/grammar-tooltip.js"></script>
 <script src="js/deep-link.js"></script>
+<!-- BBCode toolbar (reuses phpBB editor.js for insertion/caret so it feels like posting on the forum).
+     The globals must be declared before the editor script runs. -->
+<script>
+  var form_name = 'notesform';
+  var text_name = 'message';
+</script>
+<script src="js/phpbb-editor.js"></script>
+<script src="js/bbcode-toolbar.js"></script>
+<script src="js/abbc3-toolbar.js"></script>
 <script>
 (function () {
     var sel = document.getElementById('sel-book');
@@ -544,6 +643,373 @@ const VERSE_REF  = <?= json_encode($range_ref_str) ?>;
 })();
 </script>
 <?php require __DIR__ . '/bible_sidebar.php'; ?>
+</div>
+
+<script>
+const CURRENT_USER_ID = <?= json_encode((int)$user['id']) ?>;
+const CURRENT_USER_NAME = <?= json_encode($user['name']) ?>;
+const CSRF_TOKEN = <?= json_encode(get_csrf_token()) ?>;
+</script>
+
+<script>
+// Verse notes UI: +note button opens modal prefilled for edit if current user already has note(s)
+// for that verse (per the "edit existing + Create new note" requirement). Title is required
+// (enforced client+server+DB) to distinguish e.g. separate notes on word-ranges 913 vs 703.
+// Form supports create or update; list below shows all notes (public collab) with [edit] for own.
+// No full page reload on save; list and badge refresh in place.
+(function () {
+    const modal = document.getElementById('notes-modal');
+    if (!modal) return;
+    if (modal.hasAttribute('hidden')) modal.style.display = 'none';
+    const form = document.getElementById('notes-form');
+    const formWrap = document.getElementById('notes-form-wrap');
+    const closeBtn = document.getElementById('notes-modal-close');
+    const addBtn = document.getElementById('notes-add-btn');
+    const gemSec = document.getElementById('notes-gem-section');
+
+    function showForm() { if (formWrap) formWrap.hidden = false; }
+    function hideForm() { if (formWrap) formWrap.hidden = true; }
+    const typeCbs = document.querySelectorAll('.notes-type-cb');  // NodeList of checkboxes
+    const gemCb   = document.querySelector('.notes-type-cb[value="4"]'); // Gematria checkbox
+    const listEl = document.getElementById('notes-list');
+    let currentVerse = null;
+    let editingNoteId = null;
+
+    // Returns comma-separated string of checked type IDs, e.g. "1,4"
+    function getCheckedTypeIds() {
+        const ids = [];
+        typeCbs.forEach(cb => { if (cb.checked) ids.push(cb.value); });
+        return ids.length ? ids.join(',') : '1';
+    }
+
+    // Set checkboxes from an array of type IDs or names (handles both)
+    function setCheckedTypes(types) {
+        typeCbs.forEach(cb => { cb.checked = false; });
+        if (!types || types.length === 0) {
+            // Default to General
+            document.querySelector('.notes-type-cb[value="1"]').checked = true;
+            return;
+        }
+        // types is array of IDs (numbers) from server, e.g. [1, 4]
+        types.forEach(t => {
+            const cb = document.querySelector('.notes-type-cb[value="' + t + '"]');
+            if (cb) cb.checked = true;
+        });
+    }
+
+    function renderNotesList(notes) {
+        listEl.innerHTML = '';
+        if (!notes || notes.length === 0) {
+            listEl.innerHTML = '<em>No notes yet for this verse. Be the first to contribute!</em>';
+            return;
+        }
+        notes.forEach(n => {
+            const div = document.createElement('div');
+            div.className = 'note-item';
+            const safeTitle = (n.title || '').replace(/</g, '&lt;');
+            const safeUser = (n.username || 'User').replace(/</g, '&lt;');
+            const safeBody = n.rendered || (n.note_text || '').replace(/</g, '&lt;');
+            const typeTags = (n.types || ['General']).map(t =>
+                '<span class="note-type-tag">' + t.replace(/</g, '&lt;') + '</span>'
+            ).join(' ');
+            const gemNote = (n.type_ids && n.type_ids.includes(4)) ? ' [gematria ' + (n.gem_std || 0) + ']' : '';
+            const isMine = parseInt(n.user_id || 0) === CURRENT_USER_ID;
+
+            // Title line: title · type tags · by user · date · [Edit] [Delete]
+            const titleEl = document.createElement('div');
+            titleEl.className = 'note-title-line';
+            let titleHtml = '';
+            if (safeTitle) titleHtml += '<strong>' + safeTitle + '</strong> ';
+            titleHtml += typeTags + ' by <strong>' + safeUser + '</strong>' + gemNote +
+                ' <span class="note-date">' + ((n.created_at || '').substring(0, 10)) + '</span>';
+            titleEl.innerHTML = titleHtml;
+
+            if (isMine) {
+                const eb = document.createElement('button');
+                eb.type = 'button';
+                eb.textContent = 'Edit';
+                eb.className = 'note-action-btn';
+                eb.onclick = () => loadNoteForEdit(n);
+                titleEl.appendChild(eb);
+
+                const db = document.createElement('button');
+                db.type = 'button';
+                db.textContent = 'Delete';
+                db.className = 'note-action-btn delete-note-btn';
+                db.onclick = () => {
+                    if (!confirm('Delete this note? This cannot be undone.')) return;
+                    deleteNote(n.id, currentVerse);
+                };
+                titleEl.appendChild(db);
+            }
+            div.appendChild(titleEl);
+
+            // Body: fully rendered content
+            const bodyEl = document.createElement('div');
+            bodyEl.className = 'note-body';
+            bodyEl.innerHTML = safeBody;
+            div.appendChild(bodyEl);
+
+            listEl.appendChild(div);
+        });
+    }
+
+    function loadNoteForEdit(n) {
+        if (!n) return;
+        editingNoteId = parseInt(n.id || 0) || null;
+        setCheckedTypes(n.type_ids || []);
+        document.getElementById('notes-title').value = n.title || '';
+        document.getElementById('notes-text').value = n.note_text || '';
+        document.getElementById('notes-gem-std').value = (n.gem_std != null ? n.gem_std : '');
+        document.getElementById('notes-gem-ord').value = (n.gem_ord != null ? n.gem_ord : '');
+        document.getElementById('notes-gem-red').value = (n.gem_red != null ? n.gem_red : '');
+        gemSec.hidden = !(gemCb && gemCb.checked);
+        const subBtn = document.getElementById('notes-submit');
+        if (subBtn) subBtn.textContent = 'Update Note';
+        const cnb = document.getElementById('notes-create-new');
+        if (cnb) cnb.style.display = '';
+        showForm();
+    }
+
+    function startNewNote() {
+        editingNoteId = null;
+        setCheckedTypes([1]); // default to General
+        document.getElementById('notes-title').value = '';
+        document.getElementById('notes-text').value = '';
+        document.getElementById('notes-gem-std').value = '';
+        document.getElementById('notes-gem-ord').value = '';
+        document.getElementById('notes-gem-red').value = '';
+        gemSec.hidden = true;
+        const subBtn = document.getElementById('notes-submit');
+        if (subBtn) subBtn.textContent = 'Save Note';
+        const cnb = document.getElementById('notes-create-new');
+        if (cnb) cnb.style.display = 'none';
+    }
+
+    function refreshNotesList(book, ch, vs) {
+        listEl.innerHTML = '<em>Loading...</em>';
+        fetch('api.php?api=verse_notes&book=' + encodeURIComponent(book) + '&chapter=' + ch + '&verse=' + vs)
+            .then(r => r.json())
+            .then(notes => { renderNotesList(notes || []); })
+            .catch(() => { listEl.innerHTML = '<em>Could not refresh notes.</em>'; });
+    }
+
+    function updateVerseCountBadge(book, ch, vs) {
+        const block = document.querySelector('.verse-block[data-book="' + book + '"][data-chapter="' + ch + '"][data-verse="' + vs + '"]');
+        if (!block) return;
+        const cntEl = block.querySelector('.verse-notes-count');
+        if (!cntEl) return;
+        fetch('api.php?api=verse_notes&book=' + encodeURIComponent(book) + '&chapter=' + ch + '&verse=' + vs)
+            .then(r => r.json())
+            .then(list => {
+                const n = (list && list.length) || 0;
+                cntEl.textContent = n > 0 ? '(' + n + ')' : '';
+                cntEl.dataset.count = n;
+            })
+            .catch(() => {});
+    }
+
+    function deleteNote(noteId, verseCtx) {
+        if (!noteId) return;
+        const data = new URLSearchParams({
+            api: 'delete_verse_note',
+            id: noteId,
+            csrf_token: (typeof CSRF_TOKEN !== 'undefined' ? CSRF_TOKEN : '')
+        });
+        fetch('api.php', { method: 'POST', body: data, headers: {'Content-Type': 'application/x-www-form-urlencoded'} })
+            .then(r => r.json())
+            .then(resp => {
+                if (resp && resp.success) {
+                    if (verseCtx) {
+                        refreshNotesList(verseCtx.book, verseCtx.ch, verseCtx.vs);
+                        updateVerseCountBadge(verseCtx.book, verseCtx.ch, verseCtx.vs);
+                    }
+                    // if we were editing the deleted one, reset form
+                    if (editingNoteId && parseInt(editingNoteId) === parseInt(noteId)) {
+                        startNewNote();
+                    }
+                } else {
+                    alert('Delete failed: ' + (resp && resp.error ? resp.error : 'unknown'));
+                }
+            })
+            .catch(() => alert('Network error deleting note.'));
+    }
+
+    function showModal(book, ch, vs) {
+        currentVerse = {book, ch, vs};
+        const bookOpt = document.querySelector('#sel-book option[value="' + book + '"]');
+        const longName = (bookOpt && bookOpt.dataset.full) ? bookOpt.dataset.full : book;
+        document.getElementById('notes-verse-ref').textContent = longName + ' ' + ch + ':' + vs;
+        document.getElementById('notes-book').value = book;
+        document.getElementById('notes-chapter').value = ch;
+        document.getElementById('notes-verse').value = vs;
+        startNewNote(); // reset form to clean state
+        hideForm();     // hide form; shown automatically if no existing notes, or on Add/Edit click
+        listEl.innerHTML = '<em>Loading...</em>';
+        modal.hidden = false;
+        modal.style.display = 'flex';
+
+        // fetch existing notes for this verse (public list)
+        fetch('api.php?api=verse_notes&book=' + encodeURIComponent(book) + '&chapter=' + ch + '&verse=' + vs)
+            .then(r => r.json())
+            .then(notes => {
+                renderNotesList(notes || []);
+                // No notes yet — open form immediately so the user can add one
+                if (!notes || notes.length === 0) showForm();
+            })
+            .catch(() => { listEl.innerHTML = '<em>Could not load notes.</em>'; });
+    }
+
+    function hideModal() {
+        modal.hidden = true;
+        modal.style.display = 'none';
+    }
+
+    if (closeBtn) closeBtn.addEventListener('click', hideModal);
+    const cancelBtn = document.getElementById('notes-cancel');
+    if (cancelBtn) cancelBtn.addEventListener('click', hideForm);
+    modal.addEventListener('click', e => { if (e.target === modal) hideModal(); });
+
+    if (typeCbs.length) typeCbs.forEach(cb => {
+        cb.addEventListener('change', () => {
+            if (gemCb) gemSec.hidden = !gemCb.checked;
+        });
+    });
+
+    if (form) form.addEventListener('submit', function(ev) {
+        ev.preventDefault();
+        const titleVal = document.getElementById('notes-title').value.trim();
+        const textVal = document.getElementById('notes-text').value || '';
+        if (!titleVal) {
+            const titleInput = document.getElementById('notes-title');
+            titleInput.setCustomValidity('A title is required. Use something descriptive like "First word 913" or "Aleph connection" to identify this note.');
+            titleInput.reportValidity();
+            titleInput.addEventListener('input', function clearMsg() {
+                titleInput.setCustomValidity('');
+                titleInput.removeEventListener('input', clearMsg);
+            });
+            return;
+        }
+        if (titleVal.length > 255) { alert('Title is too long (max 255 characters).'); return; }
+        if (textVal.length > 65000) { alert('Note text is too long (max ~64KB).'); return; }
+        const isUpdate = !!editingNoteId;
+        const data = new URLSearchParams({
+            api: isUpdate ? 'update_verse_note' : 'create_verse_note',
+            book: document.getElementById('notes-book').value,
+            chapter: document.getElementById('notes-chapter').value,
+            verse: document.getElementById('notes-verse').value,
+            note_type_ids: getCheckedTypeIds(),
+            title: document.getElementById('notes-title').value,
+            note_text: document.getElementById('notes-text').value,
+            gem_std: document.getElementById('notes-gem-std').value || '',
+            gem_ord: document.getElementById('notes-gem-ord').value || '',
+            gem_red: document.getElementById('notes-gem-red').value || '',
+            csrf_token: (typeof CSRF_TOKEN !== 'undefined' ? CSRF_TOKEN : '')
+        });
+        if (isUpdate) {
+            data.set('id', editingNoteId);
+        }
+        fetch('api.php', { method: 'POST', body: data, headers: {'Content-Type': 'application/x-www-form-urlencoded'} })
+            .then(r => r.json())
+            .then(resp => {
+                if (resp.success) {
+                    alert('Note saved! Thank you for contributing to the commentary.');
+                    if (currentVerse) {
+                        refreshNotesList(currentVerse.book, currentVerse.ch, currentVerse.vs);
+                        updateVerseCountBadge(currentVerse.book, currentVerse.ch, currentVerse.vs);
+                    }
+                    startNewNote();
+                    hideForm(); // return to notes-only view after save
+                } else {
+                    alert('Error saving note: ' + (resp.error || 'save failed'));
+                }
+            })
+            .catch(() => alert('Network error saving note.'));
+    });
+
+    if (addBtn) addBtn.addEventListener('click', () => { startNewNote(); showForm(); });
+
+    // Wire Create new note button (shown only while editing an existing)
+    const createNewBtn = document.getElementById('notes-create-new');
+    if (createNewBtn) createNewBtn.addEventListener('click', startNewNote);
+
+    // Autofill gem from verse or selection (sums data-gem-* on .word-cell)
+    function sumGems(cells) {
+        let s=0, o=0, r=0;
+        cells.forEach(c => {
+            s += parseInt(c.dataset.gemStd || c.getAttribute('data-gem-std') || 0, 10);
+            o += parseInt(c.dataset.gemOrd || c.getAttribute('data-gem-ord') || 0, 10);
+            r += parseInt(c.dataset.gemRed || c.getAttribute('data-gem-red') || 0, 10);
+        });
+        return {std: s, ord: o, red: r};
+    }
+
+    const fillVerseBtn = document.getElementById('notes-fill-verse');
+    if (fillVerseBtn) fillVerseBtn.addEventListener('click', () => {
+        if (!currentVerse) return;
+        const block = document.querySelector('.verse-block[data-book="' + currentVerse.book + '"][data-chapter="' + currentVerse.ch + '"][data-verse="' + currentVerse.vs + '"]');
+        if (!block) return;
+        const cells = block.querySelectorAll('.word-cell');
+        const g = sumGems(cells);
+        document.getElementById('notes-gem-std').value = g.std;
+        document.getElementById('notes-gem-ord').value = g.ord;
+        document.getElementById('notes-gem-red').value = g.red;
+    });
+
+    const fillSelBtn = document.getElementById('notes-fill-sel');
+    if (fillSelBtn) fillSelBtn.addEventListener('click', () => {
+        const selCells = document.querySelectorAll('#interlinear .word-cell.selected');
+        if (selCells.length === 0) {
+            alert('No words selected. Click or S+drag to select words first, or use "Fill from verse".');
+            return;
+        }
+        const g = sumGems(selCells);
+        document.getElementById('notes-gem-std').value = g.std;
+        document.getElementById('notes-gem-ord').value = g.ord;
+        document.getElementById('notes-gem-red').value = g.red;
+    });
+
+    // Wire up all +note buttons (they exist in the static HTML from PHP)
+    document.querySelectorAll('.add-note-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const block = btn.closest('.verse-block');
+            if (!block) return;
+            const b = block.dataset.book || 'Gen';
+            const c = parseInt(block.dataset.chapter || '1', 10);
+            const v = parseInt(block.dataset.verse || '1', 10);
+            showModal(b, c, v);
+        });
+    });
+
+    // Optional: clicking the count badge could open the modal too (future)
+    // For now, the create button is the main entry.
+
+    // On load, optionally fetch counts for visible verses to show (N) badges.
+    // To avoid too many requests, we can do one call per unique verse or skip for perf.
+    // Simple: for each block fetch count separately (small).
+    document.querySelectorAll('.verse-block').forEach(block => {
+        const b = block.dataset.book;
+        const c = block.dataset.chapter;
+        const v = block.dataset.verse;
+        if (!b || !c || !v) return;
+        const cntEl = block.querySelector('.verse-notes-count');
+        if (!cntEl) return;
+        fetch('api.php?api=verse_notes&book=' + encodeURIComponent(b) + '&chapter=' + c + '&verse=' + v)
+            .then(r => r.json())
+            .then(list => {
+                const n = (list && list.length) || 0;
+                cntEl.textContent = n > 0 ? '(' + n + ')' : '';
+                cntEl.dataset.count = n;
+                // clicking count also opens create/view
+                cntEl.addEventListener('click', () => {
+                    const btn = block.querySelector('.add-note-btn');
+                    if (btn) btn.click();
+                });
+            })
+            .catch(()=>{});
+    });
+})();
+</script>
 </div>
 </body>
 </html>

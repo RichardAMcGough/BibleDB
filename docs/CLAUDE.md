@@ -1,0 +1,1 @@
+Bible Database project. STEPBible-tagged Hebrew OT + Greek NT loaded into local MariaDB stepbible on Windows. Read HANDOFF.md in the project root first — it captures all design decisions, known data quirks, current web UI state, and pending work. Files: schema.sql, import_bible.py, verify_parser.py, web UI in web/.
