@@ -780,6 +780,48 @@ main.bible-main {
 }
 #bible-sidebar-backdrop.visible { display: block; }
 
+/* ── User login badge ────────────────────────────────────────────────── */
+/* Dev mode: badge lives in-flow inside .local-dev-banner (flex row) */
+.local-dev-banner {
+    background: #2c2c44;
+    color: #ddd;
+    padding: 6px 16px;
+    font-size: 13px;
+    border-bottom: 1px solid #444;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.bible-user-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    color: #c8cfe0;
+    white-space: nowrap;
+    line-height: 1;
+}
+/* Production mode: fixed overlay on top of external banner */
+.bible-user-badge--fixed {
+    position: fixed;
+    top: 6px;
+    right: 14px;
+    z-index: 99999;
+    background: rgba(0, 0, 0, 0.52);
+    color: #eee;
+    padding: 3px 10px;
+    border-radius: 12px;
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+}
+/* Dev-user tint (orange warning tone) */
+.bible-user-badge--dev { color: #ffb07a; }
+.bible-user-badge--fixed.bible-user-badge--dev { background: rgba(130, 40, 0, 0.72); }
+/* Mobile: hide the name, keep only the icon */
+@media (max-width: 480px) {
+    .bible-user-badge .bible-user-name { display: none; }
+}
+
 /* ---------- Mobile: slide-in drawer ---------- */
 @media (max-width: 768px) {
     .bible-layout { display: block; }

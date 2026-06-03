@@ -88,7 +88,29 @@ function bible_render_layout_banner(): void {
         require __DIR__ . '/local_banner.inc.php';
     } else {
         require __DIR__ . '/../include/bwBanner.php';
+        // Production banner is external — inject our badge as a fixed overlay.
+        bible_render_user_badge(false);
     }
+}
+
+/**
+ * Emit a small "logged in as" badge.
+ * $inflow=true  → plain inline element (placed inside a flex banner by the caller).
+ * $inflow=false → position:fixed top-right overlay (used with the external production banner).
+ * Safe to call when db.php is not loaded — returns silently.
+ */
+function bible_render_user_badge(bool $inflow = true): void {
+    if (!function_exists('get_bible_user')) return;
+    $user = get_bible_user();
+    $name = htmlspecialchars($user['name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    $is_dev = ((int)$user['id'] === 999999);
+    $cls = 'bible-user-badge';
+    if (!$inflow) $cls .= ' bible-user-badge--fixed';
+    if ($is_dev)  $cls .= ' bible-user-badge--dev';
+    echo '<div class="' . $cls . '" title="Logged in as ' . $name . '">';
+    echo '<i class="fa fa-user-circle" aria-hidden="true"></i>';
+    echo '<span class="bible-user-name">' . $name . '</span>';
+    echo '</div>';
 }
 
 // Emit the page's stylesheet <link> tags. Hrefs are RELATIVE so the page
