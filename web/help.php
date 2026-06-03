@@ -1,5 +1,7 @@
 <?php
 require_once __DIR__ . '/helpers.php';
+$_help_cfg = file_exists(__DIR__ . '/config.php') ? require __DIR__ . '/config.php' : [];
+$_help_forum_url = htmlspecialchars(rtrim($_help_cfg['phpbb_url'] ?? '', '/'), ENT_QUOTES, 'UTF-8');
 ?><?php bible_render_layout_header(); ?>
 <html>
 <head>
@@ -36,7 +38,7 @@ require_once __DIR__ . '/helpers.php';
     encounter missing data, display anomalies, or features that change between
     visits. If something looks wrong, a hard refresh (<kbd>Ctrl+Shift+R</kbd> /
     <kbd>⌘⇧R</kbd>) will clear any cached pages. Please report persistent issues
-    via the forum — your feedback directly shapes what gets fixed or added next.
+    via the <a href="<?= $_help_forum_url ?>" style="color:inherit">Bible Wheel forum</a> — your feedback directly shapes what gets fixed or added next.
   </div>
 
   <!-- ═══════════════════════════════════════════════════════ WHAT'S NEW -->
@@ -125,7 +127,7 @@ require_once __DIR__ . '/helpers.php';
     Bible DB uses your existing Bible Wheel forum account — no separate
     registration needed. Click the <strong>Log in</strong> link in the
     top-right corner or visit the
-    <a href="https://www.biblewheel.com/forum/">Bible Wheel Forum</a> to sign in.
+    <a href="<?= $_help_forum_url ?>">Bible Wheel Forum</a> to sign in.
     Once logged in, reload this page and your username will appear in the banner.
   </p>
 
