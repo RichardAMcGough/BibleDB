@@ -165,10 +165,15 @@ function get_bible_user(): array {
         $_SESSION['bible_notes_user_id'] = 999999; // high demo id to avoid real phpBB collisions
         $_SESSION['bible_notes_username'] = 'Demo User (local dev)';
     }
+    // Determine whether we are running in local dev mode by checking for the
+    // production bwHeader.inc (same sentinel used by bible_is_local_layout() in helpers.php).
+    // On production without phpbb_path configured there is no real auth, so
+    // treat everyone as a guest to block note writes and hide the Add Note UI.
+    $is_local_dev = !file_exists(__DIR__ . '/../include/bwHeader.inc');
     $u = [
         'id'       => (int)$_SESSION['bible_notes_user_id'],
         'name'     => $_SESSION['bible_notes_username'],
-        'is_guest' => false,
+        'is_guest' => !$is_local_dev,
     ];
     return $u;
 }
