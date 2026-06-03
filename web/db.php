@@ -126,10 +126,16 @@ function get_bible_user(): array {
     $phpbb_path = rtrim($cfg['phpbb_path'] ?? '', '/\\');
     if ($phpbb_path !== '') {
         // Resolve relative paths against the web/ directory so config values
-        // like '../../phpbb' or '../forum' work without needing absolute paths.
+        // like '../../phpBB' or '../forum' work without needing absolute paths.
         if ($phpbb_path[0] !== '/' && !(strlen($phpbb_path) > 1 && $phpbb_path[1] === ':')) {
             $phpbb_path = __DIR__ . '/' . $phpbb_path;
         }
+        // CRITICAL: normalise with realpath() so any '..' segments are resolved.
+        // phpBB's DI container cache filename is md5($phpbb_root_path); if the
+        // path contains '..' the MD5 won't match the on-disk cache and phpBB
+        // tries to rebuild the container, failing with "getParameter() on null".
+        $resolved = realpath($phpbb_path);
+        $phpbb_path = ($resolved !== false ? $resolved : $phpbb_path);
         $phpbb_path = rtrim($phpbb_path, '/\\') . '/';
     }
 
