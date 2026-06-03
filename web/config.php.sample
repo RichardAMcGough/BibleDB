@@ -33,4 +33,10 @@ return [
     // in web/js/phpbb-editor.js). Include trailing slash. Example: '/forum/' or 'https://forum.example.com/'.
     // If empty we use the local vendored editor (recommended for isolation).
     'phpbb_url' => '',
+
+    // === User badge in banner bar ===
+    // Show a small "logged in as" badge in the top-right of the banner.
+    // Automatically suppressed when phpbb_path is empty (dev fallback / demo user).
+    // Set to true here to force it on even in dev mode.
+    'show_user_badge' => false,
 ];

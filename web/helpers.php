@@ -101,6 +101,18 @@ function bible_render_layout_banner(): void {
  */
 function bible_render_user_badge(bool $inflow = true): void {
     if (!function_exists('get_bible_user')) return;
+
+    // Read config to decide whether to show the badge.
+    static $cfg = null;
+    if ($cfg === null) {
+        $cfg_path = __DIR__ . '/config.php';
+        $cfg = file_exists($cfg_path) ? require $cfg_path : [];
+    }
+    $phpbb_path = trim($cfg['phpbb_path'] ?? '');
+    $force_show = !empty($cfg['show_user_badge']);
+    // If phpBB is not configured we'd show the generic dev user — suppress unless explicitly enabled.
+    if ($phpbb_path === '' && !$force_show) return;
+
     $user = get_bible_user();
     $name = htmlspecialchars($user['name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
     $is_dev = ((int)$user['id'] === 999999);
