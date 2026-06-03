@@ -818,8 +818,8 @@ main.bible-main {
 .bible-user-badge--dev { color: #ffb07a; }
 .bible-user-badge--fixed.bible-user-badge--dev { background: rgba(130, 40, 0, 0.72); }
 /* Guest "Log in" link */
-.bible-user-badge--guest a { color: inherit; text-decoration: underline; opacity: .85; }
-.bible-user-badge--guest a:hover { opacity: 1; }
+.bible-user-badge--guest a { color: #dde3ee; text-decoration: underline; opacity: .9; }
+.bible-user-badge--guest a:hover { color: #fff; opacity: 1; }
 /* Mobile: hide the name, keep only the icon */
 @media (max-width: 480px) {
     .bible-user-badge .bible-user-name { display: none; }
