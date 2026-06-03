@@ -526,7 +526,6 @@ if ($actual_count > 0) {
             </div><!-- /notes-form-wrap -->
             <?php endif; ?>
             <div id="notes-existing">
-                <h4>Existing notes for this verse</h4>
                 <div id="notes-list"></div>
             </div>
         </div>
