@@ -222,12 +222,12 @@ def diff_verse(verse_id, canonical, edition_text, edition_id,
                         propose(result, existing_by_slot, existing_ve,
                                 wid, pos, 'spelling', edt, edition_id)
                     else:
-                        # Treat as omission of canonical + addition of edition word
-                        # at the SAME integer position (the canonical slot).
+                        # Semantically different word: use kind='meaning'.
+                        # (omission+addition at the same integer position causes
+                        # slot conflicts in bible_assemble_words -- the omission
+                        # can overwrite the addition and hide the edition word.)
                         propose(result, existing_by_slot, existing_ve,
-                                wid, pos, 'omission', '', edition_id)
-                        propose(result, existing_by_slot, existing_ve,
-                                wid, pos, 'addition', edt, edition_id)
+                                wid, pos, 'meaning', edt, edition_id)
             else:
                 # Length mismatch: all canonical omitted, edition tokens
                 # added at fractional positions after the first canonical slot.

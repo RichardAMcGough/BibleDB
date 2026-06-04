@@ -773,7 +773,10 @@ function bible_assemble_words(PDO $pdo, int $verse_id,
            JOIN word w ON w.id = v.word_id
            JOIN variant_edition ve ON ve.variant_id = v.id
                                   AND ve.edition_id = ?
-          WHERE w.verse_id = ?"
+          WHERE w.verse_id = ?
+          ORDER BY v.word_id, v.position,
+                   CASE v.kind WHEN 'omission' THEN 0 ELSE 1 END,
+                   v.id"
     );
     $stmt->execute([$edition_id, $verse_id]);
     $variants = $stmt->fetchAll();
