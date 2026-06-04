@@ -113,7 +113,9 @@ That's it. The orchestrator handles:
 [3/7]  compute_gematria.py            gematria_word + gematria_verse
 [4/7]  populate_verseunicode.py       decode BibleWorks transliteration
 [5/7]  build_edition_verse_text.py
+  build_edition_word_slots.py    deterministic NA27/TR slot mapping
        diff_editions.py               Phase 3 variant emission
+  verify_edition_rendering.py    global NA27/TR consistency check
 [6/7]  add_text_search.py
        add_verse_search.py            phrase-search columns
 [7/7]  fix_kjv_versification.py       verse_kjv_alt mapping (Rev 12:18 etc.)
@@ -188,11 +190,13 @@ BibleDB/
 │   │   ├── compute_gematria.py
 │   │   ├── populate_verseunicode.py
 │   │   ├── build_edition_verse_text.py
+│   │   ├── build_edition_word_slots.py
 │   │   ├── diff_editions.py
 │   │   └── import_lxx.py       # optional extra
 │   └── maintenance/
 │       ├── add_text_search.py
 │       ├── add_verse_search.py
+│       ├── verify_edition_rendering.py
 │       ├── fix_kjv_versification.py
 │       ├── cleanup_*.py
 │       └── find_strongs_equiv.py
@@ -218,6 +222,19 @@ BibleDB/
   - Uses `SET FOREIGN_KEY_CHECKS` during drops
   - Works with both pymysql and mariadb connector
 - Every database connection prints a live `SELECT DATABASE()` verification.
+
+### Textual variant resolution (June 2026)
+
+- **Problem:** NA27/TR displayed text was mostly correct, but variant indicators and occasional substitutions were unstable because rendering depended on accumulated/generated variant rows and slot-collision behavior.
+- **Root cause:** generated `variant` + `variant_edition` rows were being used as part of the primary rendering path, so stale rows could survive algorithm changes and still affect UI output.
+- **Resolution:**
+  - `bible_na27` and `bible_scr` are treated as source of truth for NA27/TR text.
+  - `build_edition_verse_text.py` overwrites NA27/TR from those source tables.
+  - `build_edition_word_slots.py` creates deterministic `edition_word_slot` rows for NA27/TR.
+  - web rendering for NA27/TR reads `edition_word_slot` rather than reconstructing from variant collisions.
+  - `verify_edition_rendering.py` checks rendered NA27/TR output against `edition_verse_text` across all NT verses.
+- **Result:** full-NT verifier reached zero mismatches for NA27 and TR in fresh-db reruns; manual verse-by-verse review is no longer required for text correctness validation.
+- **UI note:** variant indicator bar is now config-controlled (`show_variant_indicator`) and currently disabled by default to avoid user-facing inconsistency while variant UX is refined.
 
 ---
 
