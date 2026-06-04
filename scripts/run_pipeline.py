@@ -14,6 +14,7 @@ Pipeline order
     [1/7]  import_bible.py                STEPBible schema + TAHOT/TAGNT load
     [2/7]  bible_na27.sql + bible_scr.sql + bible_kjv.sql + strongs-mysql.sql
            SQL dump imports (editions for NA27/SCR/KJV + strongs lookup for tooltips)
+           apply_p_variants_to_word.py    apply processed P-variants onto Hebrew base words
     [3/7]  compute_gematria.py            gematria_word + gematria_verse
     [4/7]  populate_verseunicode.py       decode BibleWorks transliteration
     [5/7]  build_edition_verse_text.py
@@ -103,8 +104,12 @@ def _script(*parts: str) -> Path:
 PIPELINE: List[List[Step]] = [
     [Step(name="import_bible", label="import_bible.py",
           script=_script("import", "import_bible.py"))],
-    [Step(name="sql_dumps",
-          label="SQL dump imports (bible_na27, bible_scr, bible_kjv + strongs lookup)")],
+    [
+        Step(name="sql_dumps",
+             label="SQL dump imports (bible_na27, bible_scr, bible_kjv + strongs lookup + optional p_variants_import)"),
+        Step(name="apply_p_variants", label="apply_p_variants_to_word.py",
+             script=_script("import", "apply_p_variants_to_word.py")),
+    ],
     [Step(name="compute_gematria", label="compute_gematria.py",
           script=_script("import", "compute_gematria.py"))],
     [Step(name="populate_verseunicode", label="populate_verseunicode.py",
@@ -896,6 +901,32 @@ def import_sql_dumps(cfg: dict, env: dict, log) -> int:
             return rc
     else:
         log("  ! strongs-mysql.sql not found — strongs lookups will fail")
+
+    # Optional: load processed p_variants_import.sql if present.
+    # This keeps the P-variant workflow reproducible in pipeline runs.
+    p_variants_path = PROJECT_ROOT / "data" / "processed" / "p_variants_import.sql"
+    if p_variants_path.exists():
+        log("  → importing optional p_variants_import table")
+        log("    > dropping p_variants_import if exists (for clean import)")
+        drop_cmd = common[:-1] + ["-e", "DROP TABLE IF EXISTS `p_variants_import`; "]
+        subprocess.run(drop_cmd, env=base_env, cwd=str(PROJECT_ROOT), capture_output=True)
+        log(f"    > mysql ... {cfg['database']} < {p_variants_path.name}")
+        t0 = time.monotonic()
+        with p_variants_path.open("rb") as src:
+            proc = subprocess.Popen(
+                common, stdin=src, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                env=base_env, cwd=str(PROJECT_ROOT), bufsize=1, encoding="utf-8", errors="replace"
+            )
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                log("    " + line.rstrip())
+            rc = proc.wait()
+        log(f"    ✓ p_variants_import ({fmt_elapsed(time.monotonic()-t0)})")
+        if rc != 0:
+            log(f"  ✗ mysql exited {rc} on p_variants_import")
+            return rc
+    else:
+        log("  ! optional data/processed/p_variants_import.sql not found — skipping P-variant import")
     return 0
 
 

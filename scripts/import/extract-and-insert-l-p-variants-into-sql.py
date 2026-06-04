@@ -1,10 +1,20 @@
 import re
-import csv
 import sys
 from pathlib import Path
 
 # Regex for valid references like Exo.20.4#09
 REF_PATTERN = re.compile(r'^[A-Za-z]{3}\.\d+\.\d+#\d+$')
+ALLOWED_P_VALUE_PATTERN = re.compile(r"^[\u0590-\u05FF\uFB1D-\uFB4F/\\\-\u05BE\u05C0\u05C3\u05F3\u05F4\s]+$")
+ASCII_PAYLOAD_PATTERN = re.compile(r"[A-Za-z0-9]")
+
+
+def is_valid_p_value(p_value):
+    """Return True only for Hebrew-token P= payloads, not gloss text."""
+    if not p_value:
+        return False
+    if ASCII_PAYLOAD_PATTERN.search(p_value):
+        return False
+    return ALLOWED_P_VALUE_PATTERN.match(p_value) is not None
 
 def parse_full_ref(full_ref):
     """
@@ -23,6 +33,7 @@ def extract_l_p_variants(path):
     Only for lines that contain a P= variant.
     """
     results = []
+    skipped_invalid_p = 0
     p_pattern = re.compile(r'\bP=\s*([^\t]+)')
 
     with open(path, 'r', encoding='utf-8') as f:
@@ -50,13 +61,15 @@ def extract_l_p_variants(path):
                 continue
 
             P_value = p_match.group(1).strip()
+            if not is_valid_p_value(P_value):
+                skipped_invalid_p += 1
+                continue
 
             # Parse reference safely
             book, chapter, verse, position = parse_full_ref(full_ref)
-
             results.append((full_ref, book, chapter, verse, position, L_value, P_value))
 
-    return results
+    return results, skipped_invalid_p
 
 
 if __name__ == "__main__":
@@ -68,7 +81,7 @@ if __name__ == "__main__":
     filename = sys.argv[1]
 
     # Extract variants
-    variants = extract_l_p_variants(filename)
+    variants, skipped_invalid_p = extract_l_p_variants(filename)
 
     # Generate SQL output to data/processed/
     project_root = Path(__file__).resolve().parent.parent.parent
@@ -107,3 +120,4 @@ if __name__ == "__main__":
         out.write(",\n".join(rows) + ";\n")
 
     print(f"Created {out_path}")
+    print(f"Kept {len(variants):,} valid P= rows; skipped {skipped_invalid_p:,} malformed P= rows.")

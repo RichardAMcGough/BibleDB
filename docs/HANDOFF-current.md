@@ -109,7 +109,9 @@ That's it. The orchestrator handles:
 [1/7]  import_bible.py                STEPBible schema + TAHOT/TAGNT load
 [2/7]  bible_na27.sql + bible_scr.sql + bible_kjv.sql
                                       External reference text dumps
-                                      (must be present in data/raw/)
+             (must be present in data/raw/)
+  + optional data/processed/p_variants_import.sql import
+  + apply_p_variants_to_word.py  updates Hebrew word.text_original from P_value
 [3/7]  compute_gematria.py            gematria_word + gematria_verse
 [4/7]  populate_verseunicode.py       decode BibleWorks transliteration
 [5/7]  build_edition_verse_text.py
@@ -161,6 +163,13 @@ mysqldump -u USER -p biblewhe_stepbible bible_kjv  > data/raw/bible_kjv.sql
 The advanced flags on `import_bible.py` (`--limit-verses`, `--dry-run`, `--truncate`) are only for development and debugging. Normal users invoke the orchestrator and never run `import_bible.py` directly.
 
 Most steps are idempotent and safe to re-run.
+
+Notes for P-variants workflow:
+- Generate/update processed SQL with
+  `python scripts/import/extract-and-insert-l-p-variants-into-sql.py "data/raw/TAHOT Gen-Deu - Translators Amalgamated Hebrew OT - STEPBible.org CC BY.txt"`.
+- Place/update `data/processed/p_variants_import.sql` before running `run_pipeline.py`.
+- The pipeline imports that table (if present) and applies `P_value` into matching Hebrew rows in `word.text_original`.
+- The applier skips rows with obvious non-Hebrew payloads for safety.
 
 ---
 
