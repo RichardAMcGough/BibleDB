@@ -11,18 +11,20 @@ verse. Emit variants with explicit `position` values:
   addition   — edition has an extra token.          position = anchor.position + 0.25/0.50/0.75
   replace big-Lev — split into omission + addition at the same canonical slot.
 
-Dedupe rule (the key simplification over previous versions): a proposed
-variant is suppressed if an existing variant at (word_id, position) already
-has the same normalized text -- regardless of kind. STEPBible's existing
-'meaning' variants for substantive substitutions are honored; we don't
-re-add the same reading under a different kind. When the reading matches
-but the edition isn't tagged yet, we add the edition tag.
+Dedupe rule: a proposed variant is suppressed if an existing variant at
+(word_id, position) already has the same normalized text -- regardless of
+kind. STEPBible's original curated variants are still honored.
 
-Idempotent: re-running after a successful run produces no changes.
+To avoid stale auto-generated rows after algorithm changes, this script
+rebuilds NT NA27/TR generated tags by default:
+    - delete NA27/TR variant_edition links for generated variant ids
+    - delete now-orphan generated variant rows
+then emit a fresh deterministic set.
 
 Run:  python diff_editions.py               # writes
       python diff_editions.py --dry-run     # analyze only
       python diff_editions.py --limit N     # first N verses only (debug)
+    python diff_editions.py --no-rebuild  # keep existing generated tags
       python diff_editions.py --config /path/to/config.ini
 """
 
@@ -31,12 +33,16 @@ import sys
 import argparse
 import unicodedata
 from collections import defaultdict
-from difflib import SequenceMatcher
 from pathlib import Path
 
 # Single source of truth for config + connection (scripts/_db, no 'stepbible' defaults)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # scripts/ when inside import/
 from _db import load_config, get_connection  # type: ignore[import-not-found]
+
+
+# STEPBible-curated seed variants are <= 12088. Phase-3/generated rows are
+# above this range; those are safe to rebuild for NA27/TR.
+GENERATED_VARIANT_MIN_ID = 12089
 
 
 # ---------------------------------------------------------------------------
@@ -90,10 +96,78 @@ def levenshtein(a, b):
 # Bulk fetch — everything in 4 queries
 # ---------------------------------------------------------------------------
 
-def fetch_inputs(cur):
+def fetch_target_editions(cur):
+        cur.execute("SELECT id, code FROM edition WHERE code IN ('NA27','TR')")
+        ed_id = {code: int(eid) for eid, code in cur.fetchall()}
+        return ed_id
+
+
+def purge_generated_nt_variant_tags(cur, conn, ed_id, dry_run=False):
+        print("[1] Resetting generated NT variant tags for NA27/TR ...")
+        targets = (ed_id['NA27'], ed_id['TR'])
+
+        cur.execute("""
+                SELECT COUNT(*)
+                    FROM variant_edition ve
+                    JOIN variant v ON v.id = ve.variant_id
+                    JOIN word w ON w.id = v.word_id
+                    JOIN book b ON b.id = w.book_id
+                 WHERE b.testament = 'NT'
+                     AND v.id >= %s
+                     AND ve.edition_id IN (%s, %s)
+        """, (GENERATED_VARIANT_MIN_ID, targets[0], targets[1]))
+        link_count = int(cur.fetchone()[0] or 0)
+
+        cur.execute("""
+                SELECT COUNT(*)
+                    FROM variant v
+                    JOIN word w ON w.id = v.word_id
+                    JOIN book b ON b.id = w.book_id
+                    LEFT JOIN variant_edition ve ON ve.variant_id = v.id
+                 WHERE b.testament = 'NT'
+                     AND v.id >= %s
+                     AND ve.variant_id IS NULL
+        """, (GENERATED_VARIANT_MIN_ID,))
+        orphan_count_before = int(cur.fetchone()[0] or 0)
+
+        print(f"    target edition tags to delete: {link_count:,}")
+        print(f"    generated NT orphans before cleanup: {orphan_count_before:,}")
+
+        if dry_run:
+                print("    dry-run: no deletions applied")
+                return
+
+        cur.execute("""
+                DELETE ve
+                    FROM variant_edition ve
+                    JOIN variant v ON v.id = ve.variant_id
+                    JOIN word w ON w.id = v.word_id
+                    JOIN book b ON b.id = w.book_id
+                 WHERE b.testament = 'NT'
+                     AND v.id >= %s
+                     AND ve.edition_id IN (%s, %s)
+        """, (GENERATED_VARIANT_MIN_ID, targets[0], targets[1]))
+        deleted_links = int(cur.rowcount or 0)
+
+        cur.execute("""
+                DELETE v
+                    FROM variant v
+                    JOIN word w ON w.id = v.word_id
+                    JOIN book b ON b.id = w.book_id
+                    LEFT JOIN variant_edition ve ON ve.variant_id = v.id
+                 WHERE b.testament = 'NT'
+                     AND v.id >= %s
+                     AND ve.variant_id IS NULL
+        """, (GENERATED_VARIANT_MIN_ID,))
+        deleted_variants = int(cur.rowcount or 0)
+        conn.commit()
+
+        print(f"    deleted variant_edition links: {deleted_links:,}")
+        print(f"    deleted orphan generated variants: {deleted_variants:,}")
+
+
+def fetch_inputs(cur, ed_id, include_legacy_for_dedupe=True):
     print("[1] Fetching inputs ...")
-    cur.execute("SELECT id, code FROM edition WHERE code IN ('NA27','TR')")
-    ed_id = {code: int(eid) for eid, code in cur.fetchall()}
     print(f"    NA27={ed_id['NA27']}, TR={ed_id['TR']}")
 
     # Canonical NT words: (word_id, verse_id, position, text_original)
@@ -110,15 +184,32 @@ def fetch_inputs(cur):
         canonical_by_verse[int(vid)].append((int(wid), float(pos), norm))
     print(f"    {len(rows):,} NT canonical words across {len(canonical_by_verse):,} verses")
 
+    # Edition-specific base words exactly as rendering starts (word_edition filtered).
+    cur.execute(f"""
+        SELECT we.edition_id, w.id, w.verse_id, w.position, w.text_original
+          FROM word_edition we
+          JOIN word w ON w.id = we.word_id
+          JOIN book b ON b.id = w.book_id
+         WHERE b.testament = 'NT'
+           AND we.edition_id IN ({ed_id['NA27']}, {ed_id['TR']})
+         ORDER BY we.edition_id, w.verse_id, w.position
+    """)
+    base_by_edition_verse = defaultdict(list)
+    for eid, wid, vid, pos, raw in cur.fetchall():
+        norm = normalize_for_diff(strip_greek_parens(raw or ''))
+        base_by_edition_verse[(int(eid), int(vid))].append((int(wid), float(pos), norm))
+    print(f"    {len(base_by_edition_verse):,} edition/verse base word streams")
+
     # Existing variants for NT, keyed by (word_id, position) -> list of (id, normalized text)
     # Also collect (variant_id, edition_id) pairs for the dedupe check.
+    legacy_filter = "" if include_legacy_for_dedupe else f" AND v.id >= {GENERATED_VARIANT_MIN_ID}"
     cur.execute("""
         SELECT v.id, v.word_id, v.position, v.text_original
           FROM variant v
           JOIN word w ON w.id = v.word_id
           JOIN book b ON b.id = w.book_id
          WHERE b.testament = 'NT'
-    """)
+    """ + legacy_filter)
     existing_by_slot = defaultdict(list)  # (word_id, position) -> [(vid, norm_text), ...]
     variant_ids = []
     for vid, wid, pos, txt in cur.fetchall():
@@ -135,7 +226,7 @@ def fetch_inputs(cur):
           JOIN word w ON w.id = v.word_id
           JOIN book b ON b.id = w.book_id
          WHERE b.testament = 'NT'
-    """)
+    """ + legacy_filter)
     existing_ve = set((int(vid), int(eid)) for vid, eid in cur.fetchall())
     print(f"    {len(existing_ve):,} existing variant_edition pairs")
 
@@ -150,7 +241,7 @@ def fetch_inputs(cur):
         edition_text[(int(eid), int(vid))] = txt
     print(f"    {len(edition_text):,} edition_verse_text rows (NA27+TR)")
 
-    return ed_id, canonical_by_verse, existing_by_slot, existing_ve, edition_text
+    return ed_id, canonical_by_verse, base_by_edition_verse, existing_by_slot, existing_ve, edition_text
 
 
 # ---------------------------------------------------------------------------
@@ -195,6 +286,78 @@ def fractional_offset(k):
     return min(0.99, 0.85 + 0.01 * (k - 2))
 
 
+def align_tokens(canonical_tokens, edition_tokens):
+    """Global alignment of token sequences (deterministic DP).
+
+    Returns a list of operations:
+      ('equal', can_idx, ed_idx)
+      ('replace', can_idx, ed_idx)
+      ('delete', can_idx, None)
+      ('insert', None, ed_idx)
+
+    Tie-break preference is stable and intentionally favors replacement over
+    split delete+insert when costs tie, which yields cleaner variant output.
+    """
+    n = len(canonical_tokens)
+    m = len(edition_tokens)
+
+    dp = [[0] * (m + 1) for _ in range(n + 1)]
+    back = [[None] * (m + 1) for _ in range(n + 1)]
+
+    for i in range(1, n + 1):
+        dp[i][0] = i
+        back[i][0] = 'delete'
+    for j in range(1, m + 1):
+        dp[0][j] = j
+        back[0][j] = 'insert'
+
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            can = canonical_tokens[i - 1]
+            edt = edition_tokens[j - 1]
+
+            sub_cost = 0 if can == edt else 1
+            c_sub = dp[i - 1][j - 1] + sub_cost
+            c_del = dp[i - 1][j] + 1
+            c_ins = dp[i][j - 1] + 1
+
+            best = min(c_sub, c_del, c_ins)
+            dp[i][j] = best
+
+            if c_sub == best:
+                back[i][j] = 'equal' if sub_cost == 0 else 'replace'
+            elif c_del == best:
+                back[i][j] = 'delete'
+            else:
+                back[i][j] = 'insert'
+
+    ops = []
+    i, j = n, m
+    while i > 0 or j > 0:
+        op = back[i][j]
+        if op in ('equal', 'replace'):
+            ops.append((op, i - 1, j - 1))
+            i -= 1
+            j -= 1
+        elif op == 'delete':
+            ops.append(('delete', i - 1, None))
+            i -= 1
+        elif op == 'insert':
+            ops.append(('insert', None, j - 1))
+            j -= 1
+        else:
+            # Safety fallback (should not happen): consume remaining tokens.
+            if i > 0:
+                ops.append(('delete', i - 1, None))
+                i -= 1
+            elif j > 0:
+                ops.append(('insert', None, j - 1))
+                j -= 1
+
+    ops.reverse()
+    return ops
+
+
 def diff_verse(verse_id, canonical, edition_text, edition_id,
                existing_by_slot, existing_ve, result):
     can_toks = [c[2] for c in canonical]
@@ -202,64 +365,66 @@ def diff_verse(verse_id, canonical, edition_text, edition_id,
     can_pos  = [c[1] for c in canonical]
     ed_toks  = (edition_text or '').split()
 
-    sm = SequenceMatcher(a=can_toks, b=ed_toks, autojunk=False)
+    ops = align_tokens(can_toks, ed_toks)
 
-    for tag, i1, i2, j1, j2 in sm.get_opcodes():
-        if tag == 'equal':
+    pending_insertions = []
+    insert_anchor_can_idx = None
+
+    def flush_insertions(anchor_idx, ed_indices):
+        if not ed_indices:
+            return
+        if not can_wids:
+            return
+        if anchor_idx is None or anchor_idx < 0:
+            anchor_wid = can_wids[0]
+            anchor_pos = 0.0
+        else:
+            anchor_wid = can_wids[anchor_idx]
+            anchor_pos = can_pos[anchor_idx]
+        for n, ed_idx in enumerate(ed_indices):
+            pos = anchor_pos + fractional_offset(n)
+            propose(result, existing_by_slot, existing_ve,
+                    anchor_wid, pos, 'addition', ed_toks[ed_idx], edition_id)
+
+    current_can_idx = 0
+
+    for op, can_idx, ed_idx in ops:
+        if op == 'insert':
+            if insert_anchor_can_idx is None:
+                insert_anchor_can_idx = current_can_idx - 1
+            pending_insertions.append(ed_idx)
             continue
 
-        if tag == 'replace':
-            la, lb = i2 - i1, j2 - j1
-            if la == lb:
-                # 1-to-1 substitutions
-                for k in range(la):
-                    can = can_toks[i1 + k]
-                    edt = ed_toks[j1 + k]
-                    if can == edt: continue
-                    wid = can_wids[i1 + k]
-                    pos = can_pos[i1 + k]
-                    if levenshtein(can, edt) <= 2:
-                        propose(result, existing_by_slot, existing_ve,
-                                wid, pos, 'spelling', edt, edition_id)
-                    else:
-                        # Semantically different word: use kind='meaning'.
-                        # (omission+addition at the same integer position causes
-                        # slot conflicts in bible_assemble_words -- the omission
-                        # can overwrite the addition and hide the edition word.)
-                        propose(result, existing_by_slot, existing_ve,
-                                wid, pos, 'meaning', edt, edition_id)
-            else:
-                # Length mismatch: all canonical omitted, edition tokens
-                # added at fractional positions after the first canonical slot.
-                for k in range(i1, i2):
-                    propose(result, existing_by_slot, existing_ve,
-                            can_wids[k], can_pos[k], 'omission', '', edition_id)
-                # Anchor for additions
-                anchor_wid = can_wids[i1] if i1 < len(can_wids) else can_wids[-1]
-                anchor_pos = can_pos[i1]  if i1 < len(can_pos)  else can_pos[-1]
-                for k in range(j1, j2):
-                    pos = anchor_pos + fractional_offset(k - j1)
-                    propose(result, existing_by_slot, existing_ve,
-                            anchor_wid, pos, 'addition', ed_toks[k], edition_id)
+        if pending_insertions:
+            flush_insertions(insert_anchor_can_idx, pending_insertions)
+            pending_insertions = []
+            insert_anchor_can_idx = None
 
-        elif tag == 'delete':
-            for k in range(i1, i2):
-                propose(result, existing_by_slot, existing_ve,
-                        can_wids[k], can_pos[k], 'omission', '', edition_id)
+        if op == 'equal':
+            current_can_idx += 1
+            continue
 
-        elif tag == 'insert':
-            # Anchor: the canonical word BEFORE the insertion point
-            if i1 == 0:
-                if not can_wids: continue
-                anchor_wid = can_wids[0]
-                anchor_pos = 0.0      # insertion at start of verse
-            else:
-                anchor_wid = can_wids[i1 - 1]
-                anchor_pos = can_pos[i1 - 1]
-            for k in range(j1, j2):
-                pos = anchor_pos + fractional_offset(k - j1)
+        if op == 'replace':
+            can = can_toks[can_idx]
+            edt = ed_toks[ed_idx]
+            wid = can_wids[can_idx]
+            pos = can_pos[can_idx]
+            if levenshtein(can, edt) <= 2:
                 propose(result, existing_by_slot, existing_ve,
-                        anchor_wid, pos, 'addition', ed_toks[k], edition_id)
+                        wid, pos, 'spelling', edt, edition_id)
+            else:
+                propose(result, existing_by_slot, existing_ve,
+                        wid, pos, 'meaning', edt, edition_id)
+            current_can_idx += 1
+            continue
+
+        if op == 'delete':
+            propose(result, existing_by_slot, existing_ve,
+                    can_wids[can_idx], can_pos[can_idx], 'omission', '', edition_id)
+            current_can_idx += 1
+
+    if pending_insertions:
+        flush_insertions(insert_anchor_can_idx, pending_insertions)
 
 
 # ---------------------------------------------------------------------------
@@ -305,6 +470,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--dry-run', action='store_true')
     ap.add_argument('--limit', type=int, default=0)
+    ap.add_argument('--no-rebuild', action='store_true',
+                    help='Do not purge/rebuild generated NA27/TR variant tags before diffing')
     ap.add_argument('--config', default=str(project_root / 'config.ini'))
     args = ap.parse_args()
 
@@ -313,7 +480,14 @@ def main():
     conn, driver = get_connection(cfg)
     cur = conn.cursor()
 
-    ed_id, canonical_by_verse, existing_by_slot, existing_ve, edition_text = fetch_inputs(cur)
+    ed_id = fetch_target_editions(cur)
+    if not args.no_rebuild:
+        purge_generated_nt_variant_tags(cur, conn, ed_id, dry_run=args.dry_run)
+
+    include_legacy_for_dedupe = bool(args.no_rebuild)
+    ed_id, canonical_by_verse, base_by_edition_verse, existing_by_slot, existing_ve, edition_text = fetch_inputs(
+        cur, ed_id, include_legacy_for_dedupe=include_legacy_for_dedupe
+    )
 
     print("\n[2] Diffing verses ...")
     result = DiffResult()
@@ -323,10 +497,11 @@ def main():
 
     processed = 0
     for vid in verse_ids:
-        canonical = canonical_by_verse[vid]
+        canonical_all = canonical_by_verse[vid]
         for _code, eid in targets:
             txt = edition_text.get((eid, vid))
             if txt is None: continue
+            canonical = base_by_edition_verse.get((eid, vid), canonical_all)
             diff_verse(vid, canonical, txt, eid,
                        existing_by_slot, existing_ve, result)
         processed += 1

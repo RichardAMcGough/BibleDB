@@ -72,6 +72,7 @@ $_idx_cfg = file_exists(__DIR__ . '/config.php') ? require __DIR__ . '/config.ph
 $_notes_login_url = !empty($_idx_cfg['phpbb_url'])
     ? rtrim($_idx_cfg['phpbb_url'], '/') . '/ucp.php?mode=login'
     : '';
+$_show_variant_indicator = !empty($_idx_cfg['show_variant_indicator']);
 unset($_idx_cfg);
 
 // Edition dropdown. OT Hebrew books get BHS + LXX-Rahlfs; NT + LXX books
@@ -431,7 +432,7 @@ if ($actual_count > 0) {
             }
             $sd_num            = strongs_display($w['strongs']);
             $sd_full           = strongs_full_code($w['strongs'], $lang);
-            $has_variant_class = !empty($w['variants']) ? ' has-variant' : '';
+            $has_variant_class = (!empty($w['variants']) && $_show_variant_indicator) ? ' has-variant' : '';
             // If db.php substituted a variant onto this canonical word, find
             // its index in $w['variants'] so variant-switcher can start
             // cycling from the correct state. 'base' = canonical text shown.
@@ -463,7 +464,7 @@ if ($actual_count > 0) {
                 <?php if ((int)$w['chunk_num'] > 1): ?>
                     <div class="chunk-badge">chunk <?= (int)$w['chunk_num'] ?></div>
                 <?php endif; ?>
-                <?php if (!empty($w['variants'])): ?>
+                <?php if ($_show_variant_indicator && !empty($w['variants'])): ?>
                     <button class="variant-btn" title="<?= count($w['variants']) ?> variant<?= count($w['variants']) > 1 ? 's' : '' ?> — click to switch" tabindex="-1"></button>
                 <?php endif; ?>
             </div>

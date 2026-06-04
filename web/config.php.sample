@@ -39,4 +39,9 @@ return [
     // Automatically suppressed when phpbb_path is empty (dev fallback / demo user).
     // Set to true here to force it on even in dev mode.
     'show_user_badge' => false,
+
+    // === Variant indicator bar ===
+    // When true, word cells with variants show the clickable variant bar.
+    // Set false to hide bars globally while keeping variant data available.
+    'show_variant_indicator' => false,
 ];

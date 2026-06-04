@@ -9,6 +9,10 @@ require_once __DIR__ . '/book_aliases.php';
 require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/render_context.php';
 
+$_cmp_cfg = file_exists(__DIR__ . '/config.php') ? require __DIR__ . '/config.php' : [];
+$_show_variant_indicator = !empty($_cmp_cfg['show_variant_indicator']);
+unset($_cmp_cfg);
+
 const OT_BOOK_CODES_CMP = [
     'Gen','Exo','Lev','Num','Deu','Jos','Jdg','Rut',
     '1Sa','2Sa','1Ki','2Ki','1Ch','2Ch','Ezr','Neh','Est',
@@ -85,8 +89,9 @@ $sel_book    = 'Gen';
 $sel_chapter = 1;
 $sel_verse   = 1;
 $sel_edition = cmp_default_edition($sel_book); // 'BHS' for Gen
-$books    = bible_books();
-$chapters = bible_chapters($sel_book);
+$books      = bible_books();
+$books_lxx  = lxx_books();
+$chapters   = bible_chapters($sel_book);
 $verses_sel = $chapters ? bible_verses($sel_book, $sel_chapter) : [];
 
 // --- Fetch verse data and build render contexts ---
@@ -325,7 +330,7 @@ $all_raws = array_column($entries, 'raw');
         }
         $sd_num            = strongs_display($w['strongs']);
         $sd_full           = strongs_full_code($w['strongs'], $lang);
-        $has_variant_class = !empty($w['variants']) ? ' has-variant' : '';
+        $has_variant_class = (!empty($w['variants']) && $_show_variant_indicator) ? ' has-variant' : '';
         $active_variant    = 'base';
         if (!empty($w['source_variant_id']) && !empty($w['variants'])) {
             foreach ($w['variants'] as $vi => $vt_chk) {
@@ -353,7 +358,7 @@ $all_raws = array_column($entries, 'raw');
             <?php if ((int)$w['chunk_num'] > 1): ?>
                 <div class="chunk-badge">chunk <?= (int)$w['chunk_num'] ?></div>
             <?php endif; ?>
-            <?php if (!empty($w['variants'])): ?>
+            <?php if ($_show_variant_indicator && !empty($w['variants'])): ?>
                 <button class="variant-btn" title="<?= count($w['variants']) ?> variant<?= count($w['variants']) > 1 ? 's' : '' ?> — click to switch" tabindex="-1"></button>
             <?php endif; ?>
         </div>
@@ -367,6 +372,19 @@ $all_raws = array_column($entries, 'raw');
 
 <?php endif; ?>
 
+<!-- Book list data for JS-driven switcher -->
+<script>
+const BIBLE_BOOKS_DATA = <?= json_encode(array_map(fn($b) => [
+    'osis' => $b['osis_code'],
+    'name' => preg_replace('/^LXX\s+/i', '', $b['name']),
+    'lang' => $b['language'],
+], $books), JSON_UNESCAPED_UNICODE) ?>;
+const LXX_BOOKS_DATA = <?= json_encode(array_map(fn($b) => [
+    'osis' => $b['osis_code'],
+    'name' => preg_replace('/^LXX\s+/i', '', $b['name']),
+    'lang' => 'Greek',
+], $books_lxx), JSON_UNESCAPED_UNICODE) ?>;
+</script>
 <!-- Combined word-data payload for all verses -->
 <script id="word-data" type="application/json"><?= json_encode($combined_payload, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?></script>
 <script>
@@ -441,6 +459,30 @@ const VERSE_REF  = 'Verse Comparison';
         selEdition.value = codes.includes(current) ? current : editions[0].code;
     }
 
+    // Repopulate the book list based on edition: LXX-Rahlfs → LXX books, else canonical.
+    async function syncBookOptions(keepBook) {
+        const isLxxEd = selEdition.value === 'LXX-Rahlfs';
+        const list    = isLxxEd
+            ? (typeof LXX_BOOKS_DATA !== 'undefined' ? LXX_BOOKS_DATA : [])
+            : (typeof BIBLE_BOOKS_DATA !== 'undefined' ? BIBLE_BOOKS_DATA : []);
+        selBook.innerHTML = '';
+        list.forEach(b => {
+            const o = document.createElement('option');
+            o.value = b.osis;
+            o.textContent = b.name;
+            o.dataset.lang = b.lang;
+            o.dataset.full = b.name;
+            o.dataset.abbr = b.osis.replace(/^Lxx/, '');
+            selBook.appendChild(o);
+        });
+        // Restore previously selected book if still in list, else default to first.
+        if (keepBook && list.some(b => b.osis === keepBook)) {
+            selBook.value = keepBook;
+        }
+        // Refresh chapters/verses for the now-selected book.
+        await refreshChaptersVerses();
+    }
+
     async function fetchList(url) {
         return fetch(url).then(r => r.json()).catch(() => []);
     }
@@ -454,28 +496,37 @@ const VERSE_REF  = 'Verse Comparison';
         }
     }
 
-    selBook.addEventListener('change', async function () {
-        syncEditionOptions();
-        const book = this.value;
+    async function refreshChaptersVerses() {
+        const book     = selBook.value;
         const chapters = await fetchList(`api.php?api=chapters&book=${encodeURIComponent(book)}`);
         await repopulate(selChapter, chapters);
         if (chapters.length) {
             const verses = await fetchList(`api.php?api=verses&book=${encodeURIComponent(book)}&chapter=${encodeURIComponent(chapters[0])}`);
             await repopulate(selVerse, verses);
         }
+    }
+
+    selBook.addEventListener('change', async function () {
+        syncEditionOptions();
+        await refreshChaptersVerses();
         // No form submit — user clicks "+ Add Verse" when ready.
     });
 
     selChapter.addEventListener('change', async function () {
-        const book = selBook.value;
+        const book   = selBook.value;
         const verses = await fetchList(`api.php?api=verses&book=${encodeURIComponent(book)}&chapter=${encodeURIComponent(this.value)}`);
         await repopulate(selVerse, verses);
         // No form submit.
     });
 
-    // selVerse and selEdition: no auto-submit — user clicks "+ Add Verse".
+    selEdition.addEventListener('change', async function () {
+        const prevBook = selBook.value;
+        await syncBookOptions(prevBook);
+        syncEditionOptions();
+        // No form submit — user clicks "+ Add Verse" when ready.
+    });
 
-    // Sync edition options to match the initial book on page load.
+    // Initial state: sync edition options and book list for the default book.
     syncEditionOptions();
 })();
 </script>

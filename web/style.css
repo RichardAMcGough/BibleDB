@@ -1115,3 +1115,43 @@ main.bible-main {
     text-decoration: line-through;
     text-decoration-color: rgba(0, 0, 0, 0.25);
 }
+
+/* ── Word spacer controls (versecomparison.php, compare mode) ─────────── */
+.spacer-ctrl {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    opacity: 0;
+    transition: opacity 0.15s;
+    z-index: 2;
+    pointer-events: none;
+}
+.word-cell:hover .spacer-ctrl,
+.word-cell:focus-within .spacer-ctrl {
+    opacity: 1;
+    pointer-events: auto;
+}
+.spacer-btn {
+    font-size: 11px;
+    line-height: 1;
+    padding: 1px 4px;
+    border: 1px solid var(--border, #d1d5db);
+    border-radius: 3px;
+    background: var(--card, #fff);
+    color: var(--accent, #1d4ed8);
+    cursor: pointer;
+    font-weight: 700;
+}
+.spacer-btn:hover { background: var(--accent-bg, #eff6ff); }
+.spacer-badge {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--accent, #1d4ed8);
+    background: var(--accent-bg, #eff6ff);
+    border-radius: 3px;
+    padding: 0 3px;
+    line-height: 1.4;
+}

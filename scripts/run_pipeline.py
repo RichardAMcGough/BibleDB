@@ -17,7 +17,9 @@ Pipeline order
     [3/7]  compute_gematria.py            gematria_word + gematria_verse
     [4/7]  populate_verseunicode.py       decode BibleWorks transliteration
     [5/7]  build_edition_verse_text.py
+           build_edition_word_slots.py    persisted NA27/TR slot mapping from source text
            diff_editions.py               Phase 3 variant emission
+           verify_edition_rendering.py    compare rendered NA27/TR vs edition_verse_text
     [6/7]  add_text_search.py
            add_verse_search.py            phrase-search column population
     [7/7]  fix_kjv_versification.py       verse_kjv_alt mapping
@@ -110,8 +112,12 @@ PIPELINE: List[List[Step]] = [
     [
         Step(name="build_edition_verse_text", label="build_edition_verse_text.py",
              script=_script("import", "build_edition_verse_text.py")),
+           Step(name="build_edition_word_slots", label="build_edition_word_slots.py",
+               script=_script("import", "build_edition_word_slots.py")),
         Step(name="diff_editions", label="diff_editions.py",
              script=_script("import", "diff_editions.py")),
+           Step(name="verify_edition_rendering", label="verify_edition_rendering.py",
+               script=_script("maintenance", "verify_edition_rendering.py")),
     ],
     [
         Step(name="add_text_search", label="add_text_search.py",
@@ -348,6 +354,15 @@ def ensure_schema_migrations(cfg: dict, log) -> bool:
         cur = conn.cursor()
 
         # ── Tracking table ────────────────────────────────────────────────────
+        # Rename old db_migrations → db_versions on first run after the rename.
+        cur.execute(
+            "SELECT COUNT(*) FROM information_schema.TABLES "
+            " WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'db_migrations'",
+            (cfg["database"],),
+        )
+        if (cur.fetchone()[0] or 0) > 0:
+            cur.execute("RENAME TABLE db_migrations TO db_versions")
+            conn.commit()
         cur.execute("""
             CREATE TABLE IF NOT EXISTS db_versions (
                 version     SMALLINT UNSIGNED NOT NULL PRIMARY KEY,
@@ -673,6 +688,46 @@ def ensure_schema_migrations(cfg: dict, log) -> bool:
             else:
                 log("    no fixes needed")
         run(12, "strongs_primary_heal", m12)
+
+        # ── 13: edition_word_slot table (NA27/TR source-of-truth slot map) ─
+        def m13():
+            # Guard: on fresh DB, core tables (edition/verse/word) do not
+            # exist yet because migrations run before import_bible.
+            cur.execute(
+                "SELECT COUNT(*) FROM information_schema.TABLES "
+                " WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'edition'",
+                (cfg["database"],),
+            )
+            if (cur.fetchone()[0] or 0) == 0:
+                log("    core tables not yet created — skipping (fresh DB)")
+                return
+            cur.execute(
+                "SELECT COUNT(*) FROM information_schema.TABLES "
+                " WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'edition_word_slot'",
+                (cfg["database"],),
+            )
+            if (cur.fetchone()[0] or 0) == 0:
+                log("    creating edition_word_slot ...")
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS edition_word_slot (
+                        id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                        edition_id  TINYINT UNSIGNED NOT NULL,
+                        verse_id    INT UNSIGNED NOT NULL,
+                        slot_num    SMALLINT UNSIGNED NOT NULL,
+                        position    DECIMAL(6,2) NOT NULL,
+                        word_id     INT UNSIGNED NULL,
+                        token_text  VARCHAR(200) NOT NULL,
+                        op_type     ENUM('equal','replace','insert') NOT NULL,
+                        UNIQUE KEY uq_ews_slot (edition_id, verse_id, slot_num),
+                        KEY idx_ews_verse (edition_id, verse_id),
+                        KEY idx_ews_word (word_id),
+                        CONSTRAINT fk_ews_edition FOREIGN KEY (edition_id) REFERENCES edition(id),
+                        CONSTRAINT fk_ews_verse   FOREIGN KEY (verse_id) REFERENCES verse(id),
+                        CONSTRAINT fk_ews_word    FOREIGN KEY (word_id) REFERENCES word(id) ON DELETE SET NULL
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """)
+                conn.commit()
+        run(13, "edition_word_slot_table", m13)
 
         return True
     except Exception as e:

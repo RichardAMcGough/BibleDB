@@ -223,24 +223,70 @@
         }).observe(wrapper, { attributeFilter: ['data-active-variant'], subtree: true });
     }
 
+    // ── Spacer controls (compare mode only) ──────────────────────────────────
+    // Each word cell can have a left-margin spacer (in units of SPACER_PX px).
+    // A small +/− control appears on hover at the top-left of the cell.
+    // Shift-click the + button removes a unit; plain click adds one.
+
+    const SPACER_PX  = 28;
+    const SPACER_MAX = 20;
+
+    function applySpacerToCell(cell, units) {
+        cell.dataset.spacer = units;
+        cell.style.marginLeft = units > 0 ? (units * SPACER_PX) + 'px' : '';
+        const badge = cell.querySelector('.spacer-badge');
+        if (badge) {
+            badge.textContent = units > 0 ? units : '';
+            badge.style.display = units > 0 ? '' : 'none';
+        }
+    }
+
+    function addSpacerControl(cell) {
+        if (cell.querySelector('.spacer-ctrl')) return;
+        const ctrl  = document.createElement('div');
+        ctrl.className = 'spacer-ctrl';
+        ctrl.innerHTML = '<button class="spacer-btn spacer-add" title="Add space before word (Shift+click to remove)">+</button>'
+                       + '<span class="spacer-badge" style="display:none"></span>';
+        ctrl.addEventListener('click', function (e) {
+            e.stopPropagation();
+            const cur   = parseInt(cell.dataset.spacer || '0', 10);
+            const delta = e.shiftKey ? -1 : 1;
+            const next  = Math.max(0, Math.min(SPACER_MAX, cur + delta));
+            applySpacerToCell(cell, next);
+            saveState();
+        });
+        cell.prepend(ctrl);
+        applySpacerToCell(cell, parseInt(cell.dataset.spacer || '0', 10));
+    }
+
+    if (mode === 'compare') {
+        // Add spacer controls to every word cell now and whenever new cards load.
+        document.querySelectorAll('#interlinear .word-cell').forEach(addSpacerControl);
+    }
+
     // ── URL state ─────────────────────────────────────────────────────────────
-    // Encode: lh=WORDID-LETIDX-COLOR|...   lo=WORDID-LETIDX|...
+    // lh = WORDID-LETIDX-COLOR|...   (letter highlights)
+    // lo = WORDID-LETIDX|...         (letter-off / excluded)
+    // sp = WORDID-UNITS|...          (word spacers)
 
     function saveState() {
-        const hlParts = [], loParts = [];
+        const hlParts = [], loParts = [], spParts = [];
         document.querySelectorAll('#interlinear .word-cell').forEach(cell => {
             const wid = cell.dataset.wordId;
             if (!wid) return;
             cell.querySelectorAll('.letter').forEach(s => {
                 const idx = s.dataset.idx;
-                if (s.dataset.hlState)              hlParts.push(wid + '-' + idx + '-' + s.dataset.hlState);
+                if (s.dataset.hlState)                  hlParts.push(wid + '-' + idx + '-' + s.dataset.hlState);
                 if (s.classList.contains('letter-off')) loParts.push(wid + '-' + idx);
             });
+            const sp = parseInt(cell.dataset.spacer || '0', 10);
+            if (sp > 0) spParts.push(wid + '-' + sp);
         });
         try {
             const url = new URL(window.location.href);
             if (hlParts.length) url.searchParams.set('lh', hlParts.join('|')); else url.searchParams.delete('lh');
             if (loParts.length) url.searchParams.set('lo', loParts.join('|')); else url.searchParams.delete('lo');
+            if (spParts.length) url.searchParams.set('sp', spParts.join('|')); else url.searchParams.delete('sp');
             history.replaceState(null, '', url.toString());
         } catch (_) {}
     }
@@ -250,6 +296,7 @@
             const url = new URL(window.location.href);
             const lh  = url.searchParams.get('lh') || '';
             const lo  = url.searchParams.get('lo') || '';
+            const sp  = url.searchParams.get('sp') || '';
 
             if (lh) {
                 lh.split('|').forEach(part => {
@@ -271,7 +318,14 @@
                     s.classList.add('letter-off');
                 });
             }
-            // Recompute gematria for cells whose letter state was restored.
+            if (sp) {
+                sp.split('|').forEach(part => {
+                    const [wid, units] = part.split('-');
+                    const cell = wrapper && wrapper.querySelector(`.word-cell[data-word-id="${CSS.escape(wid)}"]`);
+                    if (!cell) return;
+                    applySpacerToCell(cell, parseInt(units, 10));
+                });
+            }
             document.querySelectorAll('#interlinear .word-cell').forEach(recomputeGem);
         } catch (_) {}
     }

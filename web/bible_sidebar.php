@@ -15,6 +15,7 @@ function _bsActive(string $file): string {
       <?php if ($_bsCurrentPage === 'search.php'): ?>
       <a href="search.php" class="active">Search Results</a>
       <?php endif; ?>
+      <a href="versecomparison.php"<?= _bsActive('versecomparison.php') ?>>Verse Comparison</a>
       <a href="els.php"<?= _bsActive('els.php') ?>>ELS Grid</a>
       <a href="numbers.php"<?= _bsActive('numbers.php') ?>>Number Sequences</a>
       <a href="stats.php"<?= _bsActive('stats.php') ?>>Stats</a>

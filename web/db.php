@@ -733,7 +733,7 @@ function bible_verse_full(string $osis_code, int $chapter, int $verse,
     $stmt->execute([$verse_id]);
     $summaries = $stmt->fetchAll();
 
-    bible_attach_per_word_data($pdo, $words, $vrow['language']);
+    bible_attach_per_word_data($pdo, $words, $vrow['language'], $edition_id);
 
     return ['verse' => $vrow, 'words' => $words, 'summaries' => $summaries];
 }
@@ -755,6 +755,47 @@ function bible_assemble_words(PDO $pdo, int $verse_id,
         );
         $stmt->execute([$verse_id]);
         return $stmt->fetchAll();
+    }
+
+    // NA27/TR: render directly from persisted source-of-truth slot map
+    // built from bible_na27/bible_scr (edition_verse_text) alignment.
+    if ($edition_code === 'NA27' || $edition_code === 'TR') {
+        $stmt = $pdo->prepare(
+            "SELECT ews.id AS ews_id,
+                    ews.slot_num,
+                    ews.position AS slot_position,
+                    ews.word_id AS slot_word_id,
+                    ews.token_text,
+                    ews.op_type,
+                    w.*
+               FROM edition_word_slot ews
+               LEFT JOIN word w ON w.id = ews.word_id
+              WHERE ews.edition_id = ?
+                AND ews.verse_id = ?
+              ORDER BY ews.slot_num"
+        );
+        $stmt->execute([$edition_id, $verse_id]);
+        $rows = $stmt->fetchAll();
+
+        $out = [];
+        foreach ($rows as $r) {
+            $token = (string)($r['token_text'] ?? '');
+            $slotPos = isset($r['slot_position']) ? (float)$r['slot_position'] : 0.0;
+
+            if (!empty($r['slot_word_id']) && !empty($r['id'])) {
+                $w = $r;
+                if ($token !== '' && (!isset($w['text_original']) || $token !== (string)$w['text_original'])) {
+                    $w['canonical_text_original'] = $w['text_original'] ?? null;
+                    $w['text_original'] = $token;
+                }
+                // Keep the slot position for deterministic ordering when inserts surround words.
+                $w['position'] = $slotPos;
+                $out[] = $w;
+            } elseif ($token !== '') {
+                $out[] = bible_slot_token_as_word_row((int)$r['ews_id'], $verse_id, $slotPos, $token);
+            }
+        }
+        return $out;
     }
 
     $stmt = $pdo->prepare(
@@ -856,13 +897,44 @@ function bible_variant_as_word_row(array $v, int $verse_id, ?string $edition_cod
     ];
 }
 
-function bible_attach_per_word_data(PDO $pdo, array &$words, string $language): void {
+function bible_slot_token_as_word_row(int $slot_id, int $verse_id, float $position, string $token): array {
+    return [
+        'id'                => -((int)$slot_id),
+        'verse_id'          => $verse_id,
+        'book_id'           => null,
+        'chapter'           => 0,
+        'verse'             => 0,
+        'position'          => $position,
+        'word_num'          => 0,
+        'chunk_num'         => 1,
+        'source_type'       => 'insert',
+        'is_variant_marked' => 1,
+        'language'          => 'Greek',
+        'text_original'     => $token,
+        'transliteration'   => '',
+        'translation'       => '',
+        'strongs'           => '',
+        'strongs_primary'   => '',
+        'grammar'           => '',
+        'dictionary_form'   => '',
+        'submeaning'        => '',
+        'sstrong_instance'  => '',
+        'text_search'       => '',
+        'source_variant_id' => 0,
+    ];
+}
+
+function bible_attach_per_word_data(PDO $pdo, array &$words, string $language, ?int $edition_id = null): void {
     if (empty($words)) return;
 
     $real_ids = [];
+    $real_word_pos = [];
     foreach ($words as $w) {
         $wid = (int)$w['id'];
-        if ($wid > 0) $real_ids[] = $wid;
+        if ($wid > 0) {
+            $real_ids[] = $wid;
+            $real_word_pos[$wid] = sprintf('%.2f', (float)($w['position'] ?? 0));
+        }
     }
 
     $eds = $alts = $morphs = $links = $vars = $gem = [];
@@ -894,12 +966,23 @@ function bible_attach_per_word_data(PDO $pdo, array &$words, string $language): 
         $stmt->execute($real_ids);
         foreach ($stmt->fetchAll() as $r) $links[(int)$r['word_id']][] = $r;
 
-        $stmt = $pdo->prepare("SELECT DISTINCT v.* FROM variant v
-                                JOIN variant_edition ve ON ve.variant_id = v.id
-                               WHERE v.word_id IN ($marks)
-                                 AND ve.edition_id IN (1,2,7,8,11,12)
-                               ORDER BY v.word_id, v.position, v.id");
-        $stmt->execute($real_ids);
+                if ($edition_id !== null) {
+                        $stmt = $pdo->prepare("SELECT DISTINCT v.* FROM variant v
+                                                                        JOIN variant_edition ve ON ve.variant_id = v.id
+                                                                     WHERE v.word_id IN ($marks)
+                                                                         AND ve.edition_id = ?
+                                                                     ORDER BY v.word_id, v.position, v.id");
+                        $params = $real_ids;
+                        $params[] = $edition_id;
+                        $stmt->execute($params);
+                } else {
+                        $stmt = $pdo->prepare("SELECT DISTINCT v.* FROM variant v
+                                                                        JOIN variant_edition ve ON ve.variant_id = v.id
+                                                                     WHERE v.word_id IN ($marks)
+                                                                         AND ve.edition_id IN (1,2,7,8,11,12)
+                                                                     ORDER BY v.word_id, v.position, v.id");
+                        $stmt->execute($real_ids);
+                }
         foreach ($stmt->fetchAll() as $r) $vars[(int)$r['word_id']][] = $r + ['editions' => []];
 
         $vids = [];
@@ -935,7 +1018,21 @@ function bible_attach_per_word_data(PDO $pdo, array &$words, string $language): 
         $w['alts']      = $is_real ? ($alts[$wid]  ?? []) : [];
         $w['morphemes'] = $is_real ? ($morphs[$wid]?? []) : [];
         $w['links']     = $is_real ? ($links[$wid] ?? []) : [];
-        $w['variants']  = $is_real ? ($vars[$wid]  ?? []) : [];
+        if ($is_real) {
+            $vlist = $vars[$wid] ?? [];
+            $wpos = $real_word_pos[$wid] ?? null;
+            if ($wpos !== null) {
+                // Only variants at this exact slot mark the word as variant.
+                // Anchored additions at fractional positions should not mark
+                // the anchor word itself as changed.
+                $vlist = array_values(array_filter($vlist, static function ($v) use ($wpos) {
+                    return sprintf('%.2f', (float)($v['position'] ?? 0)) === $wpos;
+                }));
+            }
+            $w['variants'] = $vlist;
+        } else {
+            $w['variants'] = [];
+        }
         $g = $is_real ? ($gem[$wid] ?? null) : null;
         $w['gem_std'] = $g ? (int)$g['standard'] : 0;
         $w['gem_ord'] = $g ? (int)$g['ordinal']  : 0;
