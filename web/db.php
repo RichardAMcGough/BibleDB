@@ -467,11 +467,14 @@ function get_verse_notes(string $book_code, int $chapter, int $verse, array $use
         $is_guest = empty($user['id']) || !empty($user['is_guest']);
         $uid = (int)($user['id'] ?? 0);
 
-         $has_selected_words = _note_column_exists('selected_words');
-         $sel_col = $has_selected_words ? 'vn.selected_words,' : "'' AS selected_words,";
+        $has_selected_words = _note_column_exists('selected_words');
+        $sel_col = $has_selected_words ? 'vn.selected_words,' : "'' AS selected_words,";
+        $has_edition_code = _note_column_exists('edition_code');
+        $ed_col = $has_edition_code ? 'vn.edition_code,' : "'' AS edition_code,";
          $sql = "
              SELECT vn.id, vn.user_id, vn.username, vn.title, vn.note_text, vn.is_public,
                  {$sel_col}
+                   {$ed_col}
                  vn.gem_std, vn.gem_ord, vn.gem_red, vn.created_at, vn.updated_at,
                    GROUP_CONCAT(nt.name  ORDER BY nt.id SEPARATOR ',') AS types_csv,
                    GROUP_CONCAT(nt.id    ORDER BY nt.id SEPARATOR ',') AS type_ids_csv
@@ -520,7 +523,7 @@ function get_verse_notes(string $book_code, int $chapter, int $verse, array $use
 function create_verse_note(array $user, string $book_code, int $chapter, int $verse,
                            array $type_ids, string $title, string $note_text,
                            ?int $gem_std = null, ?int $gem_ord = null, ?int $gem_red = null,
-                           int $is_public = 0, ?string $selected_words = null): bool {
+                           int $is_public = 0, ?string $selected_words = null, ?string $edition_code = null): bool {
     set_note_last_error('');
     if (should_use_remote_api()) {
         set_note_last_error('local note writes are disabled while use_remote_api is true');
@@ -545,6 +548,8 @@ function create_verse_note(array $user, string $book_code, int $chapter, int $ve
     }
     $selected_words = is_string($selected_words) ? trim($selected_words) : null;
     if ($selected_words === '') $selected_words = null;
+    $edition_code = is_string($edition_code) ? trim($edition_code) : null;
+    if ($edition_code === '') $edition_code = null;
 
     $type_ids_csv = implode(',', $type_ids);
     if (_note_proc_exists('sp_create_verse_note')) {
@@ -553,8 +558,18 @@ function create_verse_note(array $user, string $book_code, int $chapter, int $ve
             $title, $note_text, $is_public ? 1 : 0,
             $gem_std, $gem_ord, $gem_red,
             $selected_words,
+            $edition_code,
             $type_ids_csv,
         ]);
+        if (empty($resp['ok']) && stripos((string)($resp['error'] ?? ''), 'incorrect number of arguments') !== false) {
+            $resp = _note_proc_call('sp_create_verse_note', [
+                (int)$user['id'], (string)$user['name'], $book_code, $chapter, $verse,
+                $title, $note_text, $is_public ? 1 : 0,
+                $gem_std, $gem_ord, $gem_red,
+                $selected_words,
+                $type_ids_csv,
+            ]);
+        }
         if (empty($resp['ok']) && stripos((string)($resp['error'] ?? ''), 'incorrect number of arguments') !== false) {
             // Backward compatibility with older procedure signature.
             $resp = _note_proc_call('sp_create_verse_note', [
@@ -575,7 +590,20 @@ function create_verse_note(array $user, string $book_code, int $chapter, int $ve
     try {
         $pdo = bible_pdo();
         $pdo->beginTransaction();
-        if (_note_column_exists('selected_words')) {
+        if (_note_column_exists('selected_words') && _note_column_exists('edition_code')) {
+            $stmt = $pdo->prepare("
+                INSERT INTO verse_notes
+                    (user_id, username, book_code, chapter, verse, title, note_text, is_public,
+                     gem_std, gem_ord, gem_red, selected_words, edition_code)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ");
+            $stmt->execute([
+                $user['id'], $user['name'], $book_code, $chapter, $verse,
+                $title, $note_text, $is_public,
+                $gem_std, $gem_ord, $gem_red,
+                $selected_words, $edition_code
+            ]);
+        } elseif (_note_column_exists('selected_words')) {
             $stmt = $pdo->prepare("
                 INSERT INTO verse_notes
                     (user_id, username, book_code, chapter, verse, title, note_text, is_public,
@@ -587,6 +615,19 @@ function create_verse_note(array $user, string $book_code, int $chapter, int $ve
                 $title, $note_text, $is_public,
                 $gem_std, $gem_ord, $gem_red,
                 $selected_words
+            ]);
+        } elseif (_note_column_exists('edition_code')) {
+            $stmt = $pdo->prepare("
+                INSERT INTO verse_notes
+                    (user_id, username, book_code, chapter, verse, title, note_text, is_public,
+                     gem_std, gem_ord, gem_red, edition_code)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ");
+            $stmt->execute([
+                $user['id'], $user['name'], $book_code, $chapter, $verse,
+                $title, $note_text, $is_public,
+                $gem_std, $gem_ord, $gem_red,
+                $edition_code
             ]);
         } else {
             $stmt = $pdo->prepare("
@@ -623,7 +664,7 @@ function create_verse_note(array $user, string $book_code, int $chapter, int $ve
 function update_verse_note(int $note_id, array $user, string $book_code, int $chapter, int $verse,
                            array $type_ids, string $title, string $note_text,
                            ?int $gem_std = null, ?int $gem_ord = null, ?int $gem_red = null,
-                           int $is_public = 0, ?string $selected_words = null): bool {
+                           int $is_public = 0, ?string $selected_words = null, ?string $edition_code = null): bool {
     set_note_last_error('');
     if (should_use_remote_api()) {
         set_note_last_error('local note writes are disabled while use_remote_api is true');
@@ -647,6 +688,8 @@ function update_verse_note(int $note_id, array $user, string $book_code, int $ch
     }
     $selected_words = is_string($selected_words) ? trim($selected_words) : null;
     if ($selected_words === '') $selected_words = null;
+    $edition_code = is_string($edition_code) ? trim($edition_code) : null;
+    if ($edition_code === '') $edition_code = null;
 
     $type_ids_csv = implode(',', $type_ids);
     if (_note_proc_exists('sp_update_verse_note')) {
@@ -655,8 +698,18 @@ function update_verse_note(int $note_id, array $user, string $book_code, int $ch
             $title, $note_text, $is_public ? 1 : 0,
             $gem_std, $gem_ord, $gem_red,
             $selected_words,
+            $edition_code,
             $type_ids_csv,
         ]);
+        if (empty($resp['ok']) && stripos((string)($resp['error'] ?? ''), 'incorrect number of arguments') !== false) {
+            $resp = _note_proc_call('sp_update_verse_note', [
+                $note_id, (int)$user['id'], $book_code, $chapter, $verse,
+                $title, $note_text, $is_public ? 1 : 0,
+                $gem_std, $gem_ord, $gem_red,
+                $selected_words,
+                $type_ids_csv,
+            ]);
+        }
         if (empty($resp['ok']) && stripos((string)($resp['error'] ?? ''), 'incorrect number of arguments') !== false) {
             // Backward compatibility with older procedure signature.
             $resp = _note_proc_call('sp_update_verse_note', [
@@ -677,7 +730,19 @@ function update_verse_note(int $note_id, array $user, string $book_code, int $ch
     try {
         $pdo = bible_pdo();
         $pdo->beginTransaction();
-        if (_note_column_exists('selected_words')) {
+        if (_note_column_exists('selected_words') && _note_column_exists('edition_code')) {
+            $stmt = $pdo->prepare("
+                UPDATE verse_notes
+                SET title = ?, note_text = ?, is_public = ?,
+                    gem_std = ?, gem_ord = ?, gem_red = ?, selected_words = ?, edition_code = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND user_id = ?
+            ");
+            $stmt->execute([
+                $title, $note_text, $is_public,
+                $gem_std, $gem_ord, $gem_red, $selected_words, $edition_code,
+                $note_id, $user['id']
+            ]);
+        } elseif (_note_column_exists('selected_words')) {
             $stmt = $pdo->prepare("
                 UPDATE verse_notes
                 SET title = ?, note_text = ?, is_public = ?,
@@ -687,6 +752,18 @@ function update_verse_note(int $note_id, array $user, string $book_code, int $ch
             $stmt->execute([
                 $title, $note_text, $is_public,
                 $gem_std, $gem_ord, $gem_red, $selected_words,
+                $note_id, $user['id']
+            ]);
+        } elseif (_note_column_exists('edition_code')) {
+            $stmt = $pdo->prepare("
+                UPDATE verse_notes
+                SET title = ?, note_text = ?, is_public = ?,
+                    gem_std = ?, gem_ord = ?, gem_red = ?, edition_code = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND user_id = ?
+            ");
+            $stmt->execute([
+                $title, $note_text, $is_public,
+                $gem_std, $gem_ord, $gem_red, $edition_code,
                 $note_id, $user['id']
             ]);
         } else {
@@ -829,10 +906,13 @@ function get_user_verse_notes(array $user): array {
         $is_admin = !empty($user['is_admin']);
          $has_selected_words = _note_column_exists('selected_words');
          $sel_col = $has_selected_words ? 'vn.selected_words,' : "'' AS selected_words,";
+         $has_edition_code = _note_column_exists('edition_code');
+         $ed_col = $has_edition_code ? 'vn.edition_code,' : "'' AS edition_code,";
          $sql = "
              SELECT vn.id, vn.user_id, vn.username, vn.title, vn.note_text, vn.is_public,
                    vn.book_code, vn.chapter, vn.verse,
                  {$sel_col}
+                 {$ed_col}
                    vn.gem_std, vn.gem_ord, vn.gem_red, vn.created_at, vn.updated_at,
                    GROUP_CONCAT(nt.name ORDER BY nt.id SEPARATOR ', ') AS types_label
             FROM verse_notes vn

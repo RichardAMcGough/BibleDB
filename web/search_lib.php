@@ -185,9 +185,24 @@ function bible_search_gematria(int $gem_value, ?array $user = null): array {
             $is_guest = empty($user['id']) || !empty($user['is_guest']);
             $uid = (int)($user['id'] ?? 0);
 
+            $has_edition_code = false;
+            try {
+                $cstmt = $pdo->prepare(
+                    "SELECT COUNT(*) FROM information_schema.COLUMNS
+                      WHERE TABLE_SCHEMA = DATABASE()
+                        AND TABLE_NAME = 'verse_notes'
+                        AND COLUMN_NAME = 'edition_code'"
+                );
+                $cstmt->execute();
+                $has_edition_code = ((int)$cstmt->fetchColumn()) > 0;
+            } catch (Throwable $ie) {
+                $has_edition_code = false;
+            }
+            $ed_col = $has_edition_code ? 'vn.edition_code,' : "'' AS edition_code,";
+
             $nsql = "SELECT vn.id, vn.user_id, vn.book_code, vn.chapter, vn.verse,
                             vn.title, vn.note_text, vn.username, vn.is_public,
-                           vn.gem_std, vn.gem_ord, vn.selected_words, vn.created_at
+                            vn.gem_std, vn.gem_ord, vn.selected_words, {$ed_col} vn.created_at
                        FROM verse_notes vn
                       WHERE (vn.gem_std = ? OR vn.gem_ord = ?)";
             $nparams = [$gem_value, $gem_value];
@@ -220,6 +235,7 @@ function bible_search_gematria(int $gem_value, ?array $user = null): array {
                 'gem_std'   => $nrow['gem_std'] !== null ? (int)$nrow['gem_std'] : null,
                 'gem_ord'   => $nrow['gem_ord'] !== null ? (int)$nrow['gem_ord'] : null,
                 'selected_words' => (string)($nrow['selected_words'] ?? ''),
+                'edition_code' => (string)($nrow['edition_code'] ?? ''),
                 'created_at'=> (string)$nrow['created_at'],
             ];
         }

@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS verse_notes (
     gem_ord      INT NULL,
     gem_red      INT NULL,
     selected_words VARCHAR(255) NULL,
+    edition_code VARCHAR(40) NULL,
     created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     KEY idx_vn_verse (book_code, chapter, verse),
@@ -40,6 +41,7 @@ ALTER TABLE verse_notes ADD COLUMN IF NOT EXISTS gem_std INT NULL AFTER is_publi
 ALTER TABLE verse_notes ADD COLUMN IF NOT EXISTS gem_ord INT NULL AFTER gem_std;
 ALTER TABLE verse_notes ADD COLUMN IF NOT EXISTS gem_red INT NULL AFTER gem_ord;
 ALTER TABLE verse_notes ADD COLUMN IF NOT EXISTS selected_words VARCHAR(255) NULL AFTER gem_red;
+ALTER TABLE verse_notes ADD COLUMN IF NOT EXISTS edition_code VARCHAR(40) NULL AFTER selected_words;
 
 -- Ensure title is NOT NULL and non-empty where possible.
 UPDATE verse_notes SET title = CONCAT('Note ', id) WHERE title IS NULL OR title = '';

@@ -21,6 +21,7 @@ CREATE PROCEDURE sp_create_verse_note(
     IN p_gem_ord      INT,
     IN p_gem_red      INT,
     IN p_selected_words VARCHAR(255),
+    IN p_edition_code VARCHAR(40),
     IN p_type_ids_csv VARCHAR(255)
 )
 BEGIN
@@ -40,11 +41,11 @@ BEGIN
 
     INSERT INTO verse_notes (
         user_id, username, book_code, chapter, verse,
-        title, note_text, is_public, gem_std, gem_ord, gem_red, selected_words
+        title, note_text, is_public, gem_std, gem_ord, gem_red, selected_words, edition_code
     ) VALUES (
         p_user_id, p_username, p_book_code, p_chapter, p_verse,
         p_title, p_note_text, IFNULL(p_is_public, 0), p_gem_std, p_gem_ord, p_gem_red,
-        NULLIF(p_selected_words, '')
+        NULLIF(p_selected_words, ''), NULLIF(p_edition_code, '')
     );
 
     SET v_note_id = LAST_INSERT_ID();
@@ -92,6 +93,7 @@ CREATE PROCEDURE sp_update_verse_note(
     IN p_gem_ord      INT,
     IN p_gem_red      INT,
     IN p_selected_words VARCHAR(255),
+    IN p_edition_code VARCHAR(40),
     IN p_type_ids_csv VARCHAR(255)
 )
 BEGIN
@@ -119,6 +121,7 @@ BEGIN
            gem_ord = p_gem_ord,
            gem_red = p_gem_red,
                      selected_words = NULLIF(p_selected_words, ''),
+                     edition_code = NULLIF(p_edition_code, ''),
            updated_at = CURRENT_TIMESTAMP
      WHERE id = p_note_id
        AND user_id = p_user_id;

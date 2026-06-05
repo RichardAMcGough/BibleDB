@@ -125,6 +125,11 @@ $_login_url = bible_phpbb_login_url($_cfg['phpbb_url'] ?? '');
           if ($sel !== '') {
             $href .= '&selected=' . urlencode($sel);
           }
+            $ed = trim((string)($n['edition_code'] ?? ''));
+            if ($ed !== '') {
+              $href .= '&edition=' . urlencode($ed);
+            }
+          $title_href = $href . '&open_notes=1&focus_note=' . (int)$n['id'];
           $ref = h($n['book_code']) . ' ' . (int)$n['chapter'] . ':' . (int)$n['verse'];
       ?>
         <tr>
@@ -133,7 +138,7 @@ $_login_url = bible_phpbb_login_url($_cfg['phpbb_url'] ?? '');
             <?php if ($is_admin && !$n['is_public']): ?>
               <span class="note-priv-badge" title="Private">&#x1F512;</span>
             <?php endif; ?>
-            <a href="<?= $href ?>"><?= h($n['title'] ?: '(untitled)') ?></a>
+            <a href="<?= $title_href ?>"><?= h($n['title'] ?: '(untitled)') ?></a>
           </td>
           <td class="notes-types"><?= h($n['types_label']) ?></td>
           <?php if ($is_admin): ?><td><?= h($n['username']) ?></td><?php endif; ?>

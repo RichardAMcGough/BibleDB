@@ -304,6 +304,13 @@ try {
                 $selected_words = trim(preg_replace('/,+/', ',', $selected_words), ',');
             }
             if ($selected_words === '') $selected_words = null;
+            $edition = trim((string)($_REQUEST['edition'] ?? ''));
+            if ($edition !== '' && !preg_match('/^[A-Za-z0-9_.-]{1,40}$/', $edition)) {
+                http_response_code(400);
+                echo json_encode(['error' => 'invalid edition value']);
+                break;
+            }
+            if ($edition === '') $edition = null;
             // is_public: only honoured for admins; non-admins always 0.
             $is_public = (!empty($u['is_admin']) && !empty($_REQUEST['is_public'])) ? 1 : 0;
 
@@ -336,6 +343,7 @@ try {
                     'gem_ord'       => $gord !== null ? $gord : '',
                     'gem_red'       => $gred !== null ? $gred : '',
                     'selected_words' => $selected_words ?? '',
+                    'edition'       => $edition ?? '',
                     'proxy_user_id' => $u['id'],
                     'proxy_username' => $u['name'],
                     'proxy_is_admin' => !empty($u['is_admin']) ? 1 : 0,
@@ -350,7 +358,7 @@ try {
                 break;
             }
 
-            $ok = create_verse_note($u, $book, $chap, $vrs, $type_ids, $title, $text, $gstd, $gord, $gred, $is_public, $selected_words);
+            $ok = create_verse_note($u, $book, $chap, $vrs, $type_ids, $title, $text, $gstd, $gord, $gred, $is_public, $selected_words, $edition);
             if ($ok) {
                 echo json_encode(['success' => true]);
             } else {
@@ -410,6 +418,13 @@ try {
                 $selected_words = trim(preg_replace('/,+/', ',', $selected_words), ',');
             }
             if ($selected_words === '') $selected_words = null;
+            $edition = trim((string)($_REQUEST['edition'] ?? ''));
+            if ($edition !== '' && !preg_match('/^[A-Za-z0-9_.-]{1,40}$/', $edition)) {
+                http_response_code(400);
+                echo json_encode(['error' => 'invalid edition value']);
+                break;
+            }
+            if ($edition === '') $edition = null;
             $is_public = (!empty($u['is_admin']) && !empty($_REQUEST['is_public'])) ? 1 : 0;
 
             if (!$note_id || !$book || !$chap || !$vrs || !$title || $text === '') {
@@ -441,6 +456,7 @@ try {
                     'gem_ord'       => $gord !== null ? $gord : '',
                     'gem_red'       => $gred !== null ? $gred : '',
                     'selected_words' => $selected_words ?? '',
+                    'edition'       => $edition ?? '',
                     'proxy_user_id' => $u['id'],
                     'proxy_username' => $u['name'],
                     'proxy_is_admin' => !empty($u['is_admin']) ? 1 : 0,
@@ -455,7 +471,7 @@ try {
                 break;
             }
 
-            $ok = update_verse_note($note_id, $u, $book, $chap, $vrs, $type_ids, $title, $text, $gstd, $gord, $gred, $is_public, $selected_words);
+            $ok = update_verse_note($note_id, $u, $book, $chap, $vrs, $type_ids, $title, $text, $gstd, $gord, $gred, $is_public, $selected_words, $edition);
             if ($ok) {
                 echo json_encode(['success' => true]);
             } else {

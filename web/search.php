@@ -187,6 +187,10 @@ if ($mode === 'gematria') {
     if ($n_sel !== '') {
         $n_url .= '&selected=' . urlencode($n_sel);
     }
+    $n_ed   = trim((string)($n['edition_code'] ?? ''));
+    if ($n_ed !== '') {
+        $n_url .= '&edition=' . urlencode($n_ed);
+    }
     $n_ref  = h($n['book_name'] ?? $n_code) . ' ' . $n_ch . ':' . $n_vs;
     $is_private = empty($n['is_public']);
     $std    = ($n['gem_std'] ?? null);
