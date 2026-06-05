@@ -351,6 +351,74 @@ function save_user_notes(string $notes): bool {
 // Verse notes (collaborative commentary per verse, local DB only)
 // ===================================================================
 
+function set_note_last_error(string $msg): void {
+    $GLOBALS['bible_note_last_error'] = $msg;
+}
+
+function get_note_last_error(): string {
+    return (string)($GLOBALS['bible_note_last_error'] ?? '');
+}
+
+function _note_db_error_reason(Throwable $e): string {
+    $msg = (string)$e->getMessage();
+    if (stripos($msg, 'unknown column') !== false || stripos($msg, 'doesn\'t exist') !== false
+        || stripos($msg, 'no such table') !== false) {
+        return 'notes schema is outdated on this database (run scripts/update_schema.py)';
+    }
+    if (stripos($msg, 'command denied') !== false && stripos($msg, 'verse_notes') !== false) {
+        return 'database user lacks write privileges for notes; install notes stored procedures and grant EXECUTE';
+    }
+    if (stripos($msg, 'data too long') !== false) {
+        return 'note data exceeds one of the database column limits';
+    }
+    return $msg !== '' ? $msg : 'database error';
+}
+
+function _note_proc_exists(string $proc_name): bool {
+    static $cache = [];
+    if (array_key_exists($proc_name, $cache)) {
+        return $cache[$proc_name];
+    }
+    try {
+        $pdo = bible_pdo();
+        $stmt = $pdo->prepare(
+            "SELECT COUNT(*)
+               FROM information_schema.ROUTINES
+              WHERE ROUTINE_SCHEMA = DATABASE()
+                AND ROUTINE_TYPE = 'PROCEDURE'
+                AND ROUTINE_NAME = ?"
+        );
+        $stmt->execute([$proc_name]);
+        $cache[$proc_name] = ((int)$stmt->fetchColumn()) > 0;
+    } catch (Throwable $e) {
+        $cache[$proc_name] = false;
+    }
+    return $cache[$proc_name];
+}
+
+function _note_proc_call(string $proc_name, array $params): array {
+    if (!preg_match('/^[A-Za-z0-9_]+$/', $proc_name)) {
+        return ['ok' => false, 'error' => 'invalid procedure name'];
+    }
+    try {
+        $pdo = bible_pdo();
+        $marks = implode(',', array_fill(0, count($params), '?'));
+        $sql = "CALL {$proc_name}({$marks})";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+        while ($stmt->nextRowset()) {
+            // consume extra result sets to keep connection state clean
+        }
+        $stmt->closeCursor();
+        $ok = !empty($row['ok']);
+        $err = isset($row['error']) ? trim((string)$row['error']) : '';
+        return ['ok' => $ok, 'error' => $err, 'row' => $row];
+    } catch (Throwable $e) {
+        return ['ok' => false, 'error' => _note_db_error_reason($e)];
+    }
+}
+
 /**
  * Fetch all notes for a specific verse (public, any user).
  * Returns rows with id, user_id, username, title, note_text,
@@ -365,7 +433,7 @@ function get_verse_notes(string $book_code, int $chapter, int $verse, array $use
     //   logged-in user    → own notes (any) + public notes from others
     //   admin             → all notes
     if (should_use_remote_api()) {
-        $data = remote_verse_notes($book_code, $chapter, $verse);
+        $data = remote_verse_notes($book_code, $chapter, $verse, $user);
         if (is_array($data)) {
             return $data;
         }
@@ -428,10 +496,13 @@ function create_verse_note(array $user, string $book_code, int $chapter, int $ve
                            array $type_ids, string $title, string $note_text,
                            ?int $gem_std = null, ?int $gem_ord = null, ?int $gem_red = null,
                            int $is_public = 0): bool {
+    set_note_last_error('');
     if (should_use_remote_api()) {
+        set_note_last_error('local note writes are disabled while use_remote_api is true');
         return false;
     }
     if ($user['is_guest']) {
+        set_note_last_error('login required');
         return false;
     }
     // Non-admins are always private.
@@ -440,11 +511,30 @@ function create_verse_note(array $user, string $book_code, int $chapter, int $ve
     $type_ids = array_values(array_unique(array_filter(array_map('intval', $type_ids))));
     if (empty($type_ids)) $type_ids = [1];
     if (trim($title) === '') {
+        set_note_last_error('title is required');
         return false; // title required
     }
     if (strlen($title) > 255 || strlen($note_text) > 65535) {
+        set_note_last_error('title or note text exceeds allowed size');
         return false;
     }
+
+    $type_ids_csv = implode(',', $type_ids);
+    if (_note_proc_exists('sp_create_verse_note')) {
+        $resp = _note_proc_call('sp_create_verse_note', [
+            (int)$user['id'], (string)$user['name'], $book_code, $chapter, $verse,
+            $title, $note_text, $is_public ? 1 : 0,
+            $gem_std, $gem_ord, $gem_red,
+            $type_ids_csv,
+        ]);
+        if (!empty($resp['ok'])) {
+            return true;
+        }
+        set_note_last_error($resp['error'] ?: 'database error');
+        return false;
+    }
+
+    $pdo = null;
     try {
         $pdo = bible_pdo();
         $pdo->beginTransaction();
@@ -469,6 +559,7 @@ function create_verse_note(array $user, string $book_code, int $chapter, int $ve
     } catch (Throwable $e) {
         try { $pdo->rollBack(); } catch (Throwable $re) {}
         error_log('create_verse_note error: ' . $e->getMessage());
+        set_note_last_error(_note_db_error_reason($e));
         return false;
     }
 }
@@ -481,10 +572,13 @@ function update_verse_note(int $note_id, array $user, string $book_code, int $ch
                            array $type_ids, string $title, string $note_text,
                            ?int $gem_std = null, ?int $gem_ord = null, ?int $gem_red = null,
                            int $is_public = 0): bool {
+    set_note_last_error('');
     if (should_use_remote_api()) {
+        set_note_last_error('local note writes are disabled while use_remote_api is true');
         return false;
     }
     if ($user['is_guest']) {
+        set_note_last_error('login required');
         return false;
     }
     // Non-admins cannot change visibility.
@@ -492,11 +586,30 @@ function update_verse_note(int $note_id, array $user, string $book_code, int $ch
     $type_ids = array_values(array_unique(array_filter(array_map('intval', $type_ids))));
     if (empty($type_ids)) $type_ids = [1];
     if (empty($title)) {
+        set_note_last_error('title is required');
         return false; // title required
     }
     if (strlen($title) > 255 || strlen($note_text) > 65535) {
+        set_note_last_error('title or note text exceeds allowed size');
         return false;
     }
+
+    $type_ids_csv = implode(',', $type_ids);
+    if (_note_proc_exists('sp_update_verse_note')) {
+        $resp = _note_proc_call('sp_update_verse_note', [
+            $note_id, (int)$user['id'], $book_code, $chapter, $verse,
+            $title, $note_text, $is_public ? 1 : 0,
+            $gem_std, $gem_ord, $gem_red,
+            $type_ids_csv,
+        ]);
+        if (!empty($resp['ok'])) {
+            return true;
+        }
+        set_note_last_error($resp['error'] ?: 'database error');
+        return false;
+    }
+
+    $pdo = null;
     try {
         $pdo = bible_pdo();
         $pdo->beginTransaction();
@@ -513,6 +626,7 @@ function update_verse_note(int $note_id, array $user, string $book_code, int $ch
         ]);
         if ($stmt->rowCount() === 0) {
             $pdo->rollBack();
+            set_note_last_error('note not found or you are not the owner');
             return false; // not owner or note doesn't exist
         }
         // Replace all type tags atomically.
@@ -526,6 +640,7 @@ function update_verse_note(int $note_id, array $user, string $book_code, int $ch
     } catch (Throwable $e) {
         try { $pdo->rollBack(); } catch (Throwable $re) {}
         error_log('update_verse_note error: ' . $e->getMessage());
+        set_note_last_error(_note_db_error_reason($e));
         return false;
     }
 }
@@ -534,12 +649,29 @@ function update_verse_note(int $note_id, array $user, string $book_code, int $ch
  * Delete a verse note (only by owner).
  */
 function delete_verse_note(int $note_id, array $user): bool {
+    set_note_last_error('');
     if (should_use_remote_api()) {
+        set_note_last_error('local note writes are disabled while use_remote_api is true');
         return false;
     }
     if ($user['is_guest']) {
+        set_note_last_error('login required');
         return false;
     }
+
+    if (_note_proc_exists('sp_delete_verse_note')) {
+        $resp = _note_proc_call('sp_delete_verse_note', [
+            $note_id,
+            (int)$user['id'],
+            !empty($user['is_admin']) ? 1 : 0,
+        ]);
+        if (!empty($resp['ok'])) {
+            return true;
+        }
+        set_note_last_error($resp['error'] ?: 'database error');
+        return false;
+    }
+
     try {
         $pdo = bible_pdo();
         if (!empty($user['is_admin'])) {
@@ -550,9 +682,14 @@ function delete_verse_note(int $note_id, array $user): bool {
             $stmt = $pdo->prepare('DELETE FROM verse_notes WHERE id = ? AND user_id = ?');
             $stmt->execute([$note_id, $user['id']]);
         }
-        return $stmt->rowCount() > 0;
+        $ok = $stmt->rowCount() > 0;
+        if (!$ok) {
+            set_note_last_error(!empty($user['is_admin']) ? 'note not found' : 'note not found or you are not the owner');
+        }
+        return $ok;
     } catch (Throwable $e) {
         error_log('delete_verse_note error: ' . $e->getMessage());
+        set_note_last_error(_note_db_error_reason($e));
         return false;
     }
 }
@@ -562,21 +699,42 @@ function delete_verse_note(int $note_id, array $user): bool {
  * Allows admins to publish or unpublish notes they do not own.
  */
 function set_verse_note_visibility(int $note_id, array $user, int $is_public): bool {
+    set_note_last_error('');
     if (should_use_remote_api()) {
+        set_note_last_error('local note writes are disabled while use_remote_api is true');
         return false;
     }
     if ($note_id <= 0 || empty($user['is_admin'])) {
+        set_note_last_error('admin required');
         return false;
     }
+
+    if (_note_proc_exists('sp_set_verse_note_visibility')) {
+        $resp = _note_proc_call('sp_set_verse_note_visibility', [
+            $note_id,
+            $is_public ? 1 : 0,
+        ]);
+        if (!empty($resp['ok'])) {
+            return true;
+        }
+        set_note_last_error($resp['error'] ?: 'database error');
+        return false;
+    }
+
     try {
         $pdo = bible_pdo();
         $stmt = $pdo->prepare(
             'UPDATE verse_notes SET is_public = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
         );
         $stmt->execute([$is_public ? 1 : 0, $note_id]);
-        return $stmt->rowCount() > 0;
+        $ok = $stmt->rowCount() > 0;
+        if (!$ok) {
+            set_note_last_error('note not found');
+        }
+        return $ok;
     } catch (Throwable $e) {
         error_log('set_verse_note_visibility error: ' . $e->getMessage());
+        set_note_last_error(_note_db_error_reason($e));
         return false;
     }
 }

@@ -237,13 +237,20 @@ function remote_els_fetch(string $book, int $chapter, int $verse, string $editio
     ]);
 }
 
-// Verse notes (collaborative) - GET list is public; writes are proxied with user context
-function remote_verse_notes(string $book, int $chapter, int $verse): ?array {
-    return remote_api_call('verse_notes', [
+// Verse notes (collaborative) - GET list can include signed user context so
+// private notes owned by the current user are visible in remote mode.
+function remote_verse_notes(string $book, int $chapter, int $verse, array $user = []): ?array {
+    $params = [
         'book'    => $book,
         'chapter' => $chapter,
         'verse'   => $verse,
-    ]);
+    ];
+    if (!empty($user['id']) && empty($user['is_guest'])) {
+        $params['proxy_user_id'] = (int)$user['id'];
+        $params['proxy_username'] = (string)($user['name'] ?? '');
+        $params['proxy_is_admin'] = !empty($user['is_admin']) ? 1 : 0;
+    }
+    return remote_api_call('verse_notes', $params);
 }
 
 // For writes we use the generic remote_api_call(..., 'POST', $data) from api.php proxy layer.

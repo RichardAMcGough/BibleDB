@@ -50,6 +50,7 @@ function api_verify_proxy_signature(string $endpoint, array $post): bool {
 
     $signedData = $post;
     unset($signedData['proxy_sig']);
+    unset($signedData['proxy_ts']);
     unset($signedData['api']);
     ksort($signedData);
     $canonical = http_build_query($signedData, '', '&', PHP_QUERY_RFC3986);
@@ -60,6 +61,9 @@ function api_verify_proxy_signature(string $endpoint, array $post): bool {
 }
 
 header('Content-Type: application/json; charset=utf-8');
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+header('Pragma: no-cache');
+header('Expires: 0');
 try {
     $api_is_lxx = static function (string $book): bool {
         return $book !== '' && strpos($book, 'Lxx') === 0;
@@ -224,7 +228,22 @@ try {
                 echo json_encode(['error' => 'book, chapter, verse required']);
                 break;
             }
-            $u = get_bible_user();
+            $isProxy = !empty($_GET['proxy_user_id']) && !empty($_GET['proxy_username']);
+            if ($isProxy) {
+                if (!api_verify_proxy_signature('verse_notes', $_GET)) {
+                    http_response_code(403);
+                    echo json_encode(['error' => 'invalid proxy signature']);
+                    break;
+                }
+                $u = [
+                    'id'       => (int)$_GET['proxy_user_id'],
+                    'name'     => trim((string)$_GET['proxy_username']),
+                    'is_guest' => false,
+                    'is_admin' => !empty($_GET['proxy_is_admin']),
+                ];
+            } else {
+                $u = get_bible_user();
+            }
             $notes = get_verse_notes($book, $chap, $vrs, $u);
             foreach ($notes as &$n) {
                 $n['rendered'] = bbcode_to_html($n['note_text']);
@@ -328,7 +347,8 @@ try {
             if ($ok) {
                 echo json_encode(['success' => true]);
             } else {
-                echo json_encode(['error' => 'failed to save note (db error or duplicate)']);
+                $why = function_exists('get_note_last_error') ? trim(get_note_last_error()) : '';
+                echo json_encode(['error' => $why !== '' ? ('failed to save note: ' . $why) : 'failed to save note (db error or duplicate)']);
             }
             break;
 
@@ -425,7 +445,8 @@ try {
             if ($ok) {
                 echo json_encode(['success' => true]);
             } else {
-                echo json_encode(['error' => 'failed to update note (not owner or db error)']);
+                $why = function_exists('get_note_last_error') ? trim(get_note_last_error()) : '';
+                echo json_encode(['error' => $why !== '' ? ('failed to update note: ' . $why) : 'failed to update note (not owner or db error)']);
             }
             break;
 
@@ -489,7 +510,8 @@ try {
             if ($ok) {
                 echo json_encode(['success' => true]);
             } else {
-                echo json_encode(['error' => 'failed to delete note (not owner or db error)']);
+                $why = function_exists('get_note_last_error') ? trim(get_note_last_error()) : '';
+                echo json_encode(['error' => $why !== '' ? ('failed to delete note: ' . $why) : 'failed to delete note (not owner or db error)']);
             }
             break;
 
@@ -555,7 +577,8 @@ try {
             if ($ok) {
                 echo json_encode(['success' => true]);
             } else {
-                echo json_encode(['error' => 'failed to update note visibility']);
+                $why = function_exists('get_note_last_error') ? trim(get_note_last_error()) : '';
+                echo json_encode(['error' => $why !== '' ? ('failed to update note visibility: ' . $why) : 'failed to update note visibility']);
             }
             break;
 

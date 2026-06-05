@@ -838,9 +838,15 @@ const NOTES_IS_ADMIN  = <?= json_encode(!empty($user['is_admin'])) ?>;
 
     function refreshNotesList(book, ch, vs) {
         listEl.innerHTML = '<em>Loading...</em>';
-        fetch('api.php?api=verse_notes&book=' + encodeURIComponent(book) + '&chapter=' + ch + '&verse=' + vs)
+        fetch('api.php?api=verse_notes&book=' + encodeURIComponent(book) + '&chapter=' + ch + '&verse=' + vs + '&_ts=' + Date.now(), { cache: 'no-store' })
             .then(r => r.json())
-            .then(notes => { renderNotesList(notes || []); })
+            .then(notes => {
+                if (notes && !Array.isArray(notes) && notes.error) {
+                    listEl.innerHTML = '<em>Could not load notes: ' + String(notes.error).replace(/</g, '&lt;') + '</em>';
+                    return;
+                }
+                renderNotesList(Array.isArray(notes) ? notes : []);
+            })
             .catch(() => { listEl.innerHTML = '<em>Could not refresh notes.</em>'; });
     }
 
@@ -849,7 +855,7 @@ const NOTES_IS_ADMIN  = <?= json_encode(!empty($user['is_admin'])) ?>;
         if (!block) return;
         const cntEl = block.querySelector('.verse-notes-count');
         if (!cntEl) return;
-        fetch('api.php?api=verse_notes&book=' + encodeURIComponent(book) + '&chapter=' + ch + '&verse=' + vs)
+        fetch('api.php?api=verse_notes&book=' + encodeURIComponent(book) + '&chapter=' + ch + '&verse=' + vs + '&_ts=' + Date.now(), { cache: 'no-store' })
             .then(r => r.json())
             .then(list => {
                 const n = (list && list.length) || 0;
@@ -925,12 +931,17 @@ const NOTES_IS_ADMIN  = <?= json_encode(!empty($user['is_admin'])) ?>;
         modal.style.display = 'flex';
 
         // fetch existing notes for this verse (public list)
-        fetch('api.php?api=verse_notes&book=' + encodeURIComponent(book) + '&chapter=' + ch + '&verse=' + vs)
+        fetch('api.php?api=verse_notes&book=' + encodeURIComponent(book) + '&chapter=' + ch + '&verse=' + vs + '&_ts=' + Date.now(), { cache: 'no-store' })
             .then(r => r.json())
             .then(notes => {
-                renderNotesList(notes || []);
+                if (notes && !Array.isArray(notes) && notes.error) {
+                    listEl.innerHTML = '<em>Could not load notes: ' + String(notes.error).replace(/</g, '&lt;') + '</em>';
+                    return;
+                }
+                const noteList = Array.isArray(notes) ? notes : [];
+                renderNotesList(noteList);
                 // No notes yet — open form immediately so the user can add one
-                if ((!notes || notes.length === 0) && NOTES_CAN_WRITE) showForm();
+                if (noteList.length === 0 && NOTES_CAN_WRITE) showForm();
             })
             .catch(() => { listEl.innerHTML = '<em>Could not load notes.</em>'; });
     }
