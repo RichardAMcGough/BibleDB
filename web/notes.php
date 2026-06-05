@@ -62,8 +62,24 @@ if (should_use_remote_api()) {
 }
 
 $user  = get_bible_user();
-$notes = (!$user['is_guest'] && !empty($user['id'])) ? get_user_verse_notes($user) : [];
 $is_admin = !empty($user['is_admin']);
+
+$sort = strtolower(trim((string)($_GET['sort'] ?? '')));
+if (!in_array($sort, ['recent', 'oldest', 'verse'], true)) {
+  $sort = $is_admin ? 'recent' : 'verse';
+}
+$author_filter = (int)($_GET['author'] ?? 0);
+if ($author_filter < 0) $author_filter = 0;
+
+$authors = (!$user['is_guest'] && !empty($user['id']) && $is_admin) ? get_note_authors() : [];
+$notes = [];
+if (!$user['is_guest'] && !empty($user['id'])) {
+  $notes = get_user_verse_notes($user, [
+    'sort' => $sort,
+    'author_user_id' => ($is_admin && $author_filter > 0) ? $author_filter : null,
+  ]);
+}
+
 $_cfg = file_exists(__DIR__ . '/config.php') ? require __DIR__ . '/config.php' : [];
 $_login_url = bible_phpbb_login_url($_cfg['phpbb_url'] ?? '');
 ?>
@@ -88,6 +104,10 @@ $_login_url = bible_phpbb_login_url($_cfg['phpbb_url'] ?? '');
   .note-priv-badge { font-size:0.8rem; }
   .notes-date { white-space:nowrap; color:#777; font-size:0.85rem; }
   .notes-empty { color:#666; font-style:italic; margin:20px 0; }
+  .notes-filters { margin:8px 0 14px; padding:8px 10px; border:1px solid var(--border,#ddd); border-radius:6px; background:var(--bg-alt,#f9f9f9); display:flex; flex-wrap:wrap; gap:10px 14px; align-items:end; }
+  .notes-filters label { font-size:0.85rem; color:#444; display:flex; flex-direction:column; gap:4px; }
+  .notes-filters select { min-width:180px; }
+  .notes-filters button { padding:4px 10px; }
 </style>
 </head>
 <body>
@@ -95,6 +115,31 @@ $_login_url = bible_phpbb_login_url($_cfg['phpbb_url'] ?? '');
 <div class="bible-layout">
 <main class="bible-main">
   <h1><?= $is_admin ? 'All Verse Notes' : 'My Verse Notes' ?></h1>
+
+  <?php if (!$user['is_guest'] && $is_admin): ?>
+    <form method="get" action="notes.php" class="notes-filters">
+      <label>
+        Sort
+        <select name="sort">
+          <option value="recent"<?= $sort === 'recent' ? ' selected' : '' ?>>Most Recent</option>
+          <option value="oldest"<?= $sort === 'oldest' ? ' selected' : '' ?>>Oldest First</option>
+          <option value="verse"<?= $sort === 'verse' ? ' selected' : '' ?>>By Verse</option>
+        </select>
+      </label>
+      <label>
+        Author
+        <select name="author">
+          <option value="0">All Authors</option>
+          <?php foreach ($authors as $a): ?>
+            <option value="<?= (int)$a['user_id'] ?>"<?= $author_filter === (int)$a['user_id'] ? ' selected' : '' ?>>
+              <?= h($a['username']) ?> (<?= (int)$a['note_count'] ?>)
+            </option>
+          <?php endforeach; ?>
+        </select>
+      </label>
+      <button type="submit">Apply</button>
+    </form>
+  <?php endif; ?>
 
   <?php if ($user['is_guest']): ?>
     <?php if ($_login_url !== ''): ?>

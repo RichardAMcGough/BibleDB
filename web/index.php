@@ -568,6 +568,7 @@ if ($actual_count > 0) {
 .notes-modal[hidden] { display: none !important; }
 .notes-modal-inner { background: #fff; border: 1px solid #ccc; border-radius: 6px; width: 80vw; max-width: none; max-height: 80vh; overflow: auto; padding: 12px 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); font-size: 13px; }
 .notes-modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+#notes-modal-title { margin: 20px 20px 10px 0; }
 .notes-close { font-size: 18px; background: none; border: none; cursor: pointer; }
 .notes-head-actions { display: flex; align-items: center; gap: 6px; }
 .notes-add-btn { font-size: 12px; padding: 3px 10px; cursor: pointer; }
@@ -781,7 +782,15 @@ const NOTES_IS_ADMIN  = <?= json_encode(!empty($user['is_admin'])) ?>;
             const typeTags = (n.types || ['General']).map(t =>
                 '<span class="note-type-tag">' + t.replace(/</g, '&lt;') + '</span>'
             ).join(' ');
-            const gemNote = (n.type_ids && n.type_ids.includes(4)) ? ' [gematria ' + (n.gem_std || 0) + ']' : '';
+            let gemNote = '';
+            if (n.type_ids && n.type_ids.includes(4)) {
+                const gemVal = parseInt(n.gem_std || 0, 10) || 0;
+                if (gemVal > 0) {
+                    gemNote = ' [gematria <a href="search.php?mode=gematria&amp;standard=' + gemVal + '" class="gem-link">' + gemVal + '</a>]';
+                } else {
+                    gemNote = ' [gematria 0]';
+                }
+            }
             const isMine = parseInt(n.user_id || 0) === CURRENT_USER_ID;
             const canDelete = isMine || NOTES_IS_ADMIN;
             const canToggleVisibility = NOTES_IS_ADMIN && !isMine;
@@ -1018,7 +1027,17 @@ const NOTES_IS_ADMIN  = <?= json_encode(!empty($user['is_admin'])) ?>;
     }
     const cancelBtn = document.getElementById('notes-cancel');
     if (cancelBtn) cancelBtn.addEventListener('click', hideForm);
-    modal.addEventListener('click', e => { if (e.target === modal) hideModal(); });
+
+    // Close only on a true backdrop click (pointer down starts on backdrop).
+    // This prevents accidental close when dragging text selection out of the form.
+    let notesBackdropPointerDown = false;
+    modal.addEventListener('mousedown', e => {
+        notesBackdropPointerDown = (e.target === modal);
+    });
+    modal.addEventListener('click', e => {
+        if (e.target === modal && notesBackdropPointerDown) hideModal();
+        notesBackdropPointerDown = false;
+    });
 
     if (typeCbs.length) typeCbs.forEach(cb => {
         cb.addEventListener('change', () => {
@@ -1116,6 +1135,45 @@ const NOTES_IS_ADMIN  = <?= json_encode(!empty($user['is_admin'])) ?>;
         if (redEl) redEl.value = redOn ? g.red : '';
     }
 
+    function buildSelectedOriginalText(selCells) {
+        const cells = Array.from(selCells)
+            .map(c => {
+                const origEl = c.querySelector('.original');
+                const text = (origEl ? origEl.textContent : '').replace(/\s+/g, ' ').trim();
+                const pos = parseInt(c.dataset.pos || '0', 10);
+                return {text, pos: Number.isFinite(pos) ? pos : 0};
+            })
+            .filter(x => x.text.length > 0)
+            .sort((a, b) => a.pos - b.pos);
+
+        if (!cells.length) return '';
+
+        const parts = [];
+        let prevPos = 0;
+        cells.forEach((c, idx) => {
+            if (idx > 0) {
+                parts.push(c.pos === (prevPos + 1) ? ' ' : ' ... ');
+            }
+            parts.push(c.text);
+            prevPos = c.pos;
+        });
+        return parts.join('');
+    }
+
+    function upsertSelectedTextInNote(selectedText) {
+        const noteEl = document.getElementById('notes-text');
+        if (!noteEl || !selectedText) return;
+
+        const lines = String(noteEl.value || '')
+            .replace(/\r\n/g, '\n')
+            .split('\n')
+            .filter(line => !/^Selected Text:\s*/.test(line));
+
+        const base = lines.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd();
+        const selectedLine = 'Selected Text: ' + selectedText;
+        noteEl.value = base ? (base + '\n\n' + selectedLine) : selectedLine;
+    }
+
     function persistSelectionToUrl(selCells) {
         const positions = Array.from(selCells)
             .map(c => parseInt(c.dataset.pos || '0', 10))
@@ -1164,6 +1222,8 @@ const NOTES_IS_ADMIN  = <?= json_encode(!empty($user['is_admin'])) ?>;
         persistSelectionToUrl(selCells);
         const g = sumGems(selCells);
         fillGemInputsFromOptions(g);
+        const selectedText = buildSelectedOriginalText(selCells);
+        upsertSelectedTextInNote(selectedText);
     });
 
     // Wire up all +note buttons (they exist in the static HTML from PHP)

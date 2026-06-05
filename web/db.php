@@ -895,15 +895,26 @@ function set_verse_note_visibility(int $note_id, array $user, int $is_public): b
 }
 
 /**
- * Fetch all verse_notes for the current user (own notes) or all notes (admins).
- * Used by notes.php "My Notes" list. Ordered by book / chapter / verse / created_at.
+ * Fetch verse notes for notes.php.
+ * - Non-admins: own notes only.
+ * - Admins: all notes, optional author filter and sort mode.
+ *
+ * $options:
+ *   - author_user_id: int|null (admin only)
+ *   - sort: 'recent'|'oldest'|'verse'
  */
-function get_user_verse_notes(array $user): array {
+function get_user_verse_notes(array $user, array $options = []): array {
     if (should_use_remote_api()) return [];
     if (!empty($user['is_guest']) || empty($user['id'])) return [];
     try {
         $pdo = bible_pdo();
         $is_admin = !empty($user['is_admin']);
+        $author_user_id = isset($options['author_user_id']) ? (int)$options['author_user_id'] : 0;
+        $sort = strtolower((string)($options['sort'] ?? ''));
+        if (!in_array($sort, ['recent', 'oldest', 'verse'], true)) {
+            $sort = $is_admin ? 'recent' : 'verse';
+        }
+
          $has_selected_words = _note_column_exists('selected_words');
          $sel_col = $has_selected_words ? 'vn.selected_words,' : "'' AS selected_words,";
          $has_edition_code = _note_column_exists('edition_code');
@@ -916,6 +927,7 @@ function get_user_verse_notes(array $user): array {
                    vn.gem_std, vn.gem_ord, vn.gem_red, vn.created_at, vn.updated_at,
                    GROUP_CONCAT(nt.name ORDER BY nt.id SEPARATOR ', ') AS types_label
             FROM verse_notes vn
+            LEFT JOIN book b ON b.osis_code = vn.book_code
             LEFT JOIN verse_note_types vnt ON vnt.note_id = vn.id
             LEFT JOIN note_type nt ON nt.id = vnt.type_id
         ";
@@ -923,8 +935,18 @@ function get_user_verse_notes(array $user): array {
         if (!$is_admin) {
             $sql .= ' WHERE vn.user_id = ?';
             $params[] = (int)$user['id'];
+        } elseif ($author_user_id > 0) {
+            $sql .= ' WHERE vn.user_id = ?';
+            $params[] = $author_user_id;
         }
-        $sql .= ' GROUP BY vn.id ORDER BY vn.book_code, vn.chapter, vn.verse, vn.created_at ASC';
+
+        $order_sql = 'COALESCE(b.book_order, 9999), vn.book_code, vn.chapter, vn.verse, vn.created_at ASC';
+        if ($sort === 'recent') {
+            $order_sql = 'vn.created_at DESC, vn.id DESC';
+        } elseif ($sort === 'oldest') {
+            $order_sql = 'vn.created_at ASC, vn.id ASC';
+        }
+        $sql .= ' GROUP BY vn.id ORDER BY ' . $order_sql;
         $stmt = $pdo->prepare($sql);
         $stmt->execute($params);
         $rows = $stmt->fetchAll();
@@ -936,6 +958,33 @@ function get_user_verse_notes(array $user): array {
         return $rows;
     } catch (Throwable $e) {
         error_log('get_user_verse_notes error: ' . $e->getMessage());
+        return [];
+    }
+}
+
+/**
+ * Admin helper for notes.php filters.
+ * Returns distinct authors with note counts.
+ */
+function get_note_authors(): array {
+    if (should_use_remote_api()) return [];
+    try {
+        $pdo = bible_pdo();
+        $stmt = $pdo->query(
+            "SELECT user_id, username, COUNT(*) AS note_count
+               FROM verse_notes
+              GROUP BY user_id, username
+              ORDER BY username ASC"
+        );
+        $rows = $stmt->fetchAll();
+        foreach ($rows as &$r) {
+            $r['user_id'] = (int)$r['user_id'];
+            $r['note_count'] = (int)$r['note_count'];
+        }
+        unset($r);
+        return $rows;
+    } catch (Throwable $e) {
+        error_log('get_note_authors error: ' . $e->getMessage());
         return [];
     }
 }

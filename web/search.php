@@ -9,6 +9,12 @@ require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/search_lib.php';
 
+// Search results (including gematria note matches) should always be fresh.
+// Disable browser/proxy caching so newly added notes appear immediately.
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+header('Pragma: no-cache');
+header('Expires: 0');
+
 $q_raw = trim($_GET['q']    ?? '');
 $mode  = strtolower(trim($_GET['mode'] ?? 'strongs'));
 $lang  = trim($_GET['lang'] ?? '');
@@ -18,6 +24,9 @@ $lang  = trim($_GET['lang'] ?? '');
 // remote API in remote mode, so this page exposes the same endpoints in
 // either mode.
 if (isset($_GET['api'])) {
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    header('Pragma: no-cache');
+    header('Expires: 0');
     header('Content-Type: application/json; charset=utf-8');
     switch ($_GET['api']) {
         case 'strongs':
@@ -191,6 +200,7 @@ if ($mode === 'gematria') {
     if ($n_ed !== '') {
         $n_url .= '&edition=' . urlencode($n_ed);
     }
+    $n_title_url = $n_url . '&open_notes=1&focus_note=' . (int)($n['id'] ?? 0);
     $n_ref  = h($n['book_name'] ?? $n_code) . ' ' . $n_ch . ':' . $n_vs;
     $is_private = empty($n['is_public']);
     $std    = ($n['gem_std'] ?? null);
@@ -205,7 +215,7 @@ if ($mode === 'gematria') {
 ?>
     <tr>
         <td class="search-book"><a href="<?= h($n_url) ?>" class="verse-ref" data-book="<?= h($n_code) ?>" data-chapter="<?= $n_ch ?>" data-verse="<?= $n_vs ?>"><?= $n_ref ?></a></td>
-        <td class="gem-word-cell"><strong><?= h($n['title'] ?? '') ?></strong><?= $is_private ? ' <span class="note-private-badge" title="Private note">&#x1F512;</span>' : '' ?><br><span class="gem-eng">by <?= h($n['username'] ?? 'Unknown') ?></span></td>
+        <td class="gem-word-cell"><strong><a href="<?= h($n_title_url) ?>"><?= h(($n['title'] ?? '') !== '' ? $n['title'] : '(untitled)') ?></a></strong><?= $is_private ? ' <span class="note-private-badge" title="Private note">&#x1F512;</span>' : '' ?><br><span class="gem-eng">by <?= h($n['username'] ?? 'Unknown') ?></span></td>
         <td class="gem-count-col"><?= !empty($g_bits) ? implode('<br>', $g_bits) : '&mdash;' ?></td>
         <td class="search-verses"><?= bbcode_to_html($n['note_text'] ?? '') ?></td>
     </tr>

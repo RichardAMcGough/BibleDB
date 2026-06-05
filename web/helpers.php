@@ -389,8 +389,8 @@ function bbcode_to_html(?string $text): string {
     }, $text);
 
     // Links
-    $text = preg_replace('/\[url\](https?:\/\/[^\s<"]+?)\[\/url\]/i', '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>', $text);
-    $text = preg_replace('/\[url=(https?:\/\/[^\s<"]+?)\](.*?)\[\/url\]/i', '<a href="$1" target="_blank" rel="noopener noreferrer">$2</a>', $text);
+    $text = preg_replace('/\[url\](https?:\/\/[^\s<"]+?)\[\/url\]/i', '<a href="$1" rel="noopener noreferrer">$1</a>', $text);
+    $text = preg_replace('/\[url=(https?:\/\/[^\s<"]+?)\](.*?)\[\/url\]/i', '<a href="$1" rel="noopener noreferrer">$2</a>', $text);
 
     // Images (limited)
     $text = preg_replace('/\[img\](https?:\/\/[^\s<"]+?)\[\/img\]/i', '<img src="$1" alt="user image" style="max-width:100%; height:auto;">', $text);

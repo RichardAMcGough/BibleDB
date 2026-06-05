@@ -10,6 +10,12 @@ $_bub_show      = (trim($_bub_cfg['phpbb_path'] ?? '') !== '') || !empty($_bub_c
 ?>
 <div class="local-dev-banner">
   <span><strong>BibleDB</strong> <small style="opacity:.7">— dev mode</small></span>
+  <nav class="local-dev-nav" style="display:flex;gap:14px;font-size:13px;margin-left:18px">
+    <a href="index.php">Browser</a>
+    <a href="allusions.php">Allusions</a>
+    <a href="numbers.php">Numbers</a>
+    <a href="search.php">Search</a>
+  </nav>
   <?php if ($_bub_show): ?>
   <div class="bible-user-badge<?= $_bub_dev ? ' bible-user-badge--dev' : '' ?>" title="Logged in as <?= $_bub_name ?>">
     <i class="fa fa-user-circle" aria-hidden="true"></i>
