@@ -145,20 +145,70 @@ function get_bible_user(): array {
     }
 
     // Standalone / dev fallback: use PHP session so notes work without phpBB.
-    // WARNING: all "dev" visitors share user id 999999 and can edit each others' notes.
-    // This is intentional for local testing only; production requires phpbb_path for real per-user isolation.
     _start_session_safe();
+    // On production without working phpBB auth, treat everyone as a guest.
+    $is_local_dev = !file_exists(__DIR__ . '/../include/bwHeader.inc');
+
+    // Dev-only demo identities for local testing (can be switched with ?demo_user=<key>).
+    // Example config:
+    // 'dev_demo_users' => [
+    //   'a' => ['id' => 999999, 'name' => 'Demo User A', 'is_admin' => true],
+    //   'b' => ['id' => 999998, 'name' => 'Demo User B', 'is_admin' => false],
+    // ],
+    // 'dev_demo_user_default' => 'a',
+    $demo_users = $cfg['dev_demo_users'] ?? [];
+    if (!is_array($demo_users) || empty($demo_users)) {
+        $demo_users = [
+            'default' => ['id' => 999999, 'name' => 'Demo User (local dev)', 'is_admin' => false],
+        ];
+    }
+
+    $selected_key = '';
+    if ($is_local_dev && isset($_GET['demo_user'])) {
+        $requested = trim((string)$_GET['demo_user']);
+        if ($requested !== '' && isset($demo_users[$requested]) && is_array($demo_users[$requested])) {
+            $selected_key = $requested;
+        }
+    }
+
+    if ($selected_key === '' && $is_local_dev && !empty($_SESSION['bible_notes_demo_key'])) {
+        $session_key = (string)$_SESSION['bible_notes_demo_key'];
+        if (isset($demo_users[$session_key]) && is_array($demo_users[$session_key])) {
+            $selected_key = $session_key;
+        }
+    }
+
+    if ($selected_key === '') {
+        $selected_key = (string)($cfg['dev_demo_user_default'] ?? '');
+        if ($selected_key === '' || !isset($demo_users[$selected_key]) || !is_array($demo_users[$selected_key])) {
+            $keys = array_keys($demo_users);
+            $selected_key = (string)$keys[0];
+        }
+    }
+
+    $session_key_before = (string)($_SESSION['bible_notes_demo_key'] ?? '');
+    if ($is_local_dev && ($selected_key !== '' || empty($_SESSION['bible_notes_user_id']))
+        && ($session_key_before !== $selected_key || empty($_SESSION['bible_notes_user_id']))) {
+        $du = $demo_users[$selected_key] ?? null;
+        if (is_array($du)) {
+            $_SESSION['bible_notes_user_id'] = (int)($du['id'] ?? 999999);
+            $_SESSION['bible_notes_username'] = (string)($du['name'] ?? 'Demo User (local dev)');
+            $_SESSION['bible_notes_is_admin'] = !empty($du['is_admin']) ? 1 : 0;
+            $_SESSION['bible_notes_demo_key'] = $selected_key;
+        }
+    }
+
     if (empty($_SESSION['bible_notes_user_id'])) {
         $_SESSION['bible_notes_user_id'] = 999999;
         $_SESSION['bible_notes_username'] = 'Demo User (local dev)';
+        $_SESSION['bible_notes_is_admin'] = 0;
     }
-    // On production without working phpBB auth, treat everyone as a guest.
-    $is_local_dev = !file_exists(__DIR__ . '/../include/bwHeader.inc');
+
     $u = [
         'id'       => (int)$_SESSION['bible_notes_user_id'],
         'name'     => $_SESSION['bible_notes_username'],
         'is_guest' => !$is_local_dev,
-        'is_admin' => false,
+        'is_admin' => !empty($_SESSION['bible_notes_is_admin']),
     ];
     return $u;
 }
@@ -503,6 +553,30 @@ function delete_verse_note(int $note_id, array $user): bool {
         return $stmt->rowCount() > 0;
     } catch (Throwable $e) {
         error_log('delete_verse_note error: ' . $e->getMessage());
+        return false;
+    }
+}
+
+/**
+ * Admin-only visibility toggle for a verse note.
+ * Allows admins to publish or unpublish notes they do not own.
+ */
+function set_verse_note_visibility(int $note_id, array $user, int $is_public): bool {
+    if (should_use_remote_api()) {
+        return false;
+    }
+    if ($note_id <= 0 || empty($user['is_admin'])) {
+        return false;
+    }
+    try {
+        $pdo = bible_pdo();
+        $stmt = $pdo->prepare(
+            'UPDATE verse_notes SET is_public = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+        );
+        $stmt->execute([$is_public ? 1 : 0, $note_id]);
+        return $stmt->rowCount() > 0;
+    } catch (Throwable $e) {
+        error_log('set_verse_note_visibility error: ' . $e->getMessage());
         return false;
     }
 }

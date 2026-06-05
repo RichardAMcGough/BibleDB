@@ -54,9 +54,11 @@ if ($mode === 'gematria') {
     // shape is the same so the renderer below stays unchanged.
     $gem_result    = bible_search_gematria($gem_value);
     $groups        = $gem_result['groups'];
+    $public_notes  = $gem_result['public_notes'] ?? [];
     $gem_truncated = $gem_result['truncated'];
     $form_count    = $gem_result['form_count'];
     $total_occ     = $gem_result['total_occ'];
+    $note_count    = (int)($gem_result['note_count'] ?? count($public_notes));
     ?>
 <?php bible_render_layout_header(); ?>
 <html>
@@ -77,6 +79,9 @@ if ($mode === 'gematria') {
         Standard gematria&nbsp;<strong><?= (int)$gem_value ?></strong>
         &mdash;&nbsp;<?= $form_count ?>&nbsp;word form<?= $form_count !== 1 ? 's' : '' ?>,
         <?= $total_occ ?>&nbsp;total occurrence<?= $total_occ !== 1 ? 's' : '' ?>
+        <?php if ($note_count > 0): ?>,
+            <?= $note_count ?>&nbsp;matching note<?= $note_count !== 1 ? 's' : '' ?>
+        <?php endif; ?>
         <?= $gem_truncated ? '<span class="trunc-note">(showing first 6 000)</span>' : '' ?>
     </span>
     <?php
@@ -155,6 +160,43 @@ if ($mode === 'gematria') {
     <td class="gem-count-col"><?= count($g['verses']) ?></td>
     <td class="search-verses"><?= implode('; ', $bparts) ?></td>
 </tr>
+<?php endforeach; ?>
+</tbody>
+</table>
+<?php endif; ?>
+
+<?php if (!empty($public_notes)): ?>
+<div class="search-testament">Matching Notes</div>
+<table class="search-table">
+<thead>
+    <tr>
+        <th>Verse</th>
+        <th>Title</th>
+        <th>Gematria</th>
+        <th>Note</th>
+    </tr>
+</thead>
+<tbody>
+<?php foreach ($public_notes as $n):
+    $n_code = (string)($n['book_code'] ?? '');
+    $n_ch   = (int)($n['chapter'] ?? 0);
+    $n_vs   = (int)($n['verse'] ?? 0);
+    $n_url  = 'index.php?book=' . urlencode($n_code)
+            . '&chapter=' . $n_ch . '&verse=' . $n_vs;
+    $n_ref  = h($n['book_name'] ?? $n_code) . ' ' . $n_ch . ':' . $n_vs;
+    $is_private = empty($n['is_public']);
+    $std    = ($n['gem_std'] ?? null);
+    $ord    = ($n['gem_ord'] ?? null);
+    $g_bits = [];
+    $g_bits[] = 'std: ' . ($std !== null ? (int)$std : '&mdash;');
+    $g_bits[] = 'ord: ' . ($ord !== null ? (int)$ord : '&mdash;');
+?>
+    <tr>
+        <td class="search-book"><a href="<?= h($n_url) ?>" class="verse-ref" data-book="<?= h($n_code) ?>" data-chapter="<?= $n_ch ?>" data-verse="<?= $n_vs ?>"><?= $n_ref ?></a></td>
+        <td class="gem-word-cell"><strong><?= h($n['title'] ?? '') ?></strong><?= $is_private ? ' <span class="note-private-badge" title="Private note">&#x1F512;</span>' : '' ?><br><span class="gem-eng">by <?= h($n['username'] ?? 'Unknown') ?></span></td>
+        <td class="gem-count-col"><?= implode('<br>', $g_bits) ?></td>
+        <td class="search-verses"><?= bbcode_to_html($n['note_text'] ?? '') ?></td>
+    </tr>
 <?php endforeach; ?>
 </tbody>
 </table>

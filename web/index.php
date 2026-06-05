@@ -69,9 +69,8 @@ $view_counts = record_verse_view($book_code, (int)$chapter, (int)$verse);
 $user = get_bible_user();
 // Build a login URL for the guest prompt (falls back gracefully when phpbb_url is not configured).
 $_idx_cfg = file_exists(__DIR__ . '/config.php') ? require __DIR__ . '/config.php' : [];
-$_notes_login_url = !empty($_idx_cfg['phpbb_url'])
-    ? rtrim($_idx_cfg['phpbb_url'], '/') . '/ucp.php?mode=login'
-    : '';
+$_notes_login_url = bible_phpbb_login_url($_idx_cfg['phpbb_url'] ?? '');
+$_notes_enabled = bible_notes_enabled();
 $_show_variant_indicator = !empty($_idx_cfg['show_variant_indicator']);
 unset($_idx_cfg);
 
@@ -416,8 +415,10 @@ if ($actual_count > 0) {
         <div class="verse-block" data-book="<?= h($v['osis_code'] ?? $book_code) ?>" data-chapter="<?= (int)$v['chapter'] ?>" data-verse="<?= (int)$v['verse'] ?>">
         <div class="verse-num">
             <?= $is_title ? '<span class="verse-num-title">title</span>' : (int)$v['verse'] ?><?php if ($vorder !== null): ?><span class="verse-order">#<?= $vorder ?></span><?php endif; ?>
+            <?php if ($_notes_enabled): ?>
             <button type="button" class="add-note-btn" title="Add a note / commentary for this verse (gematria notes can autofill from selection or verse)">+ note</button>
             <span class="verse-notes-count" data-count="0"></span>
+            <?php endif; ?>
         </div>
         <?php foreach ($words as $w): $word_pos++;
             if ($lang === 'Greek') {
@@ -473,6 +474,7 @@ if ($actual_count > 0) {
     <?php endforeach; ?>
     </div>
 
+    <?php if ($_notes_enabled): ?>
     <!-- Notes modal / form (injected for verse commentary) -->
     <div id="notes-modal" class="notes-modal" hidden>
         <div class="notes-modal-inner">
@@ -536,6 +538,7 @@ if ($actual_count > 0) {
             </div>
         </div>
     </div>
+    <?php endif; ?>
 
     <div class="word-detail" id="word-detail">
         <div class="wd-head">
@@ -742,6 +745,7 @@ const NOTES_IS_ADMIN  = <?= json_encode(!empty($user['is_admin'])) ?>;
             const gemNote = (n.type_ids && n.type_ids.includes(4)) ? ' [gematria ' + (n.gem_std || 0) + ']' : '';
             const isMine = parseInt(n.user_id || 0) === CURRENT_USER_ID;
             const canDelete = isMine || NOTES_IS_ADMIN;
+            const canToggleVisibility = NOTES_IS_ADMIN && !isMine;
 
             // Title line: title · type tags · by user · date · [Edit] [Delete]
             const titleEl = document.createElement('div');
@@ -760,6 +764,19 @@ const NOTES_IS_ADMIN  = <?= json_encode(!empty($user['is_admin'])) ?>;
                 eb.className = 'note-action-btn';
                 eb.onclick = () => loadNoteForEdit(n);
                 titleEl.appendChild(eb);
+            }
+            if (canToggleVisibility) {
+                const vb = document.createElement('button');
+                vb.type = 'button';
+                vb.textContent = n.is_public ? 'Make Private' : 'Make Public';
+                vb.className = 'note-action-btn';
+                vb.onclick = () => {
+                    const nextPublic = n.is_public ? 0 : 1;
+                    const actionLabel = nextPublic ? 'make this note public' : 'make this note private';
+                    if (!confirm('Admin action: ' + actionLabel + '?')) return;
+                    setNoteVisibility(n.id, nextPublic, currentVerse);
+                };
+                titleEl.appendChild(vb);
             }
             if (canDelete) {
                 const db = document.createElement('button');
@@ -866,6 +883,29 @@ const NOTES_IS_ADMIN  = <?= json_encode(!empty($user['is_admin'])) ?>;
                 }
             })
             .catch(() => alert('Network error deleting note.'));
+    }
+
+    function setNoteVisibility(noteId, isPublic, verseCtx) {
+        if (!noteId) return;
+        const data = new URLSearchParams({
+            api: 'set_verse_note_visibility',
+            id: noteId,
+            is_public: isPublic ? 1 : 0,
+            csrf_token: (typeof CSRF_TOKEN !== 'undefined' ? CSRF_TOKEN : '')
+        });
+        fetch('api.php', { method: 'POST', body: data, headers: {'Content-Type': 'application/x-www-form-urlencoded'} })
+            .then(r => r.json())
+            .then(resp => {
+                if (resp && resp.success) {
+                    if (verseCtx) {
+                        refreshNotesList(verseCtx.book, verseCtx.ch, verseCtx.vs);
+                        updateVerseCountBadge(verseCtx.book, verseCtx.ch, verseCtx.vs);
+                    }
+                } else {
+                    alert('Visibility update failed: ' + (resp && resp.error ? resp.error : 'unknown'));
+                }
+            })
+            .catch(() => alert('Network error updating visibility.'));
     }
 
     function showModal(book, ch, vs) {

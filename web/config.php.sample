@@ -20,6 +20,12 @@ return [
     // 'remote_api_base' => 'https://your-live-domain.com/bible',
     'remote_api_base' => '',
 
+    // Shared secret used to sign trusted proxy note-write requests
+    // (create/update/delete_verse_note) when use_remote_api=true.
+    // Set the SAME value on both the caller and remote API servers.
+    // Keep empty to disable proxy note writes.
+    'remote_api_proxy_secret' => '',
+
     // === Optional phpBB integration for per-user features (notes, etc.) ===
     // Set this to the filesystem path to your phpBB root (with trailing slash).
     // If set and common.php exists, the notes page (and future user features)
@@ -34,11 +40,25 @@ return [
     // If empty we use the local vendored editor (recommended for isolation).
     'phpbb_url' => '',
 
+    // === Local dev demo users (used only when phpbb_path is empty) ===
+    // Switch user by adding ?demo_user=<key> to any page URL in local dev.
+    // Example: index.php?book=Gen&chapter=1&verse=1&demo_user=viewer
+    'dev_demo_users' => [
+        'admin'  => ['id' => 999999, 'name' => 'Demo Admin (local)',  'is_admin' => true],
+        'viewer' => ['id' => 999998, 'name' => 'Demo Viewer (local)', 'is_admin' => false],
+    ],
+    'dev_demo_user_default' => 'admin',
+
     // === User badge in banner bar ===
     // Show a small "logged in as" badge in the top-right of the banner.
     // Automatically suppressed when phpbb_path is empty (dev fallback / demo user).
     // Set to true here to force it on even in dev mode.
     'show_user_badge' => false,
+
+    // === Verse notes feature ===
+    // Global switch for per-verse notes UI + API endpoints.
+    // Set false to hide note controls and disable note API actions.
+    'enable_notes' => true,
 
     // === Variant indicator bar ===
     // When true, word cells with variants show the clickable variant bar.

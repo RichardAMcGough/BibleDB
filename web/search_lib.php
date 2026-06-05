@@ -59,9 +59,11 @@ function search_normalize_query(string $text, string $lang): string {
 // Returns:
 //   [
 //     'groups'    => [ <text_search-keyed group>, ... ],
+//     'public_notes' => [ <visible gematria note row>, ... ],
 //     'truncated' => bool,
 //     'form_count'=> int,   // number of distinct word forms (groups)
 //     'total_occ' => int,   // total verse occurrences across all groups
+//     'note_count'=> int,   // total visible notes matching std/ord value
 //   ]
 // Each group:
 //   [
@@ -76,21 +78,49 @@ function search_normalize_query(string $text, string $lang): string {
 //     ],
 //   ]
 // ------------------------------------------------------------------
-function bible_search_gematria(int $gem_value): array {
+function bible_search_gematria(int $gem_value, ?array $user = null): array {
     if ($gem_value <= 0) {
-        return ['groups' => [], 'truncated' => false, 'form_count' => 0, 'total_occ' => 0];
+        return [
+            'groups' => [],
+            'public_notes' => [],
+            'truncated' => false,
+            'form_count' => 0,
+            'total_occ' => 0,
+            'note_count' => 0,
+        ];
+    }
+
+    if ($user === null) {
+        $user = function_exists('get_bible_user')
+            ? get_bible_user()
+            : ['id' => 0, 'name' => '', 'is_guest' => true, 'is_admin' => false];
     }
 
     if (should_use_remote_api()) {
-        $resp = remote_api_call('search_gematria', ['value' => $gem_value]);
+        $params = ['value' => $gem_value];
+        if (!empty($user['id']) && empty($user['is_guest'])) {
+            $params['proxy_user_id'] = (int)$user['id'];
+            $params['proxy_username'] = (string)($user['name'] ?? '');
+            $params['proxy_is_admin'] = !empty($user['is_admin']) ? 1 : 0;
+        }
+        $resp = remote_api_call('search_gematria', $params);
         if (!is_array($resp)) {
-            return ['groups' => [], 'truncated' => false, 'form_count' => 0, 'total_occ' => 0];
+            return [
+                'groups' => [],
+                'public_notes' => [],
+                'truncated' => false,
+                'form_count' => 0,
+                'total_occ' => 0,
+                'note_count' => 0,
+            ];
         }
         return [
             'groups'     => $resp['groups']     ?? [],
+            'public_notes' => $resp['public_notes'] ?? ($resp['notes'] ?? []),
             'truncated'  => !empty($resp['truncated']),
             'form_count' => (int)($resp['form_count'] ?? count($resp['groups'] ?? [])),
             'total_occ'  => (int)($resp['total_occ']  ?? 0),
+            'note_count' => (int)($resp['note_count'] ?? count($resp['public_notes'] ?? ($resp['notes'] ?? []))),
         ];
     }
 
@@ -98,8 +128,10 @@ function bible_search_gematria(int $gem_value): array {
 
     // Pre-fetch book id → name/osis_code lookup
     $books = [];
+    $books_by_code = [];
     foreach ($pdo->query('SELECT id, name, osis_code FROM book ORDER BY book_order') as $b) {
         $books[(int)$b['id']] = $b;
+        $books_by_code[(string)$b['osis_code']] = $b;
     }
 
     $stmt = $pdo->prepare('CALL GetGematriaWords(?)');
@@ -145,11 +177,62 @@ function bible_search_gematria(int $gem_value): array {
     // Use array_values so JSON-encoded output is an ordered list, not a map.
     $groups_list = array_values($groups);
 
+        // Notes matching this value by standard OR ordinal, filtered by visibility:
+        // guest => public only, user => own + public, admin => all.
+    $public_notes = [];
+    try {
+            $is_admin = !empty($user['is_admin']);
+            $is_guest = empty($user['id']) || !empty($user['is_guest']);
+            $uid = (int)($user['id'] ?? 0);
+
+            $nsql = "SELECT vn.id, vn.user_id, vn.book_code, vn.chapter, vn.verse,
+                            vn.title, vn.note_text, vn.username, vn.is_public,
+                            vn.gem_std, vn.gem_ord, vn.created_at
+                       FROM verse_notes vn
+                      WHERE (vn.gem_std = ? OR vn.gem_ord = ?)";
+            $nparams = [$gem_value, $gem_value];
+            if ($is_admin) {
+                // Admins can see all matching notes.
+            } elseif ($is_guest) {
+                $nsql .= ' AND vn.is_public = 1';
+            } else {
+                $nsql .= ' AND (vn.is_public = 1 OR vn.user_id = ?)';
+                $nparams[] = $uid;
+            }
+            $nsql .= ' ORDER BY vn.book_code, vn.chapter, vn.verse, vn.created_at, vn.id';
+
+            $nstmt = $pdo->prepare($nsql);
+            $nstmt->execute($nparams);
+        foreach ($nstmt->fetchAll() as $nrow) {
+            $code = (string)$nrow['book_code'];
+            $bk = $books_by_code[$code] ?? null;
+            $public_notes[] = [
+                'id'        => (int)$nrow['id'],
+                    'user_id'   => (int)$nrow['user_id'],
+                'book_code' => $code,
+                'book_name' => $bk['name'] ?? $code,
+                'chapter'   => (int)$nrow['chapter'],
+                'verse'     => (int)$nrow['verse'],
+                'title'     => (string)$nrow['title'],
+                'note_text' => (string)$nrow['note_text'],
+                'username'  => (string)$nrow['username'],
+                    'is_public' => (int)$nrow['is_public'],
+                'gem_std'   => $nrow['gem_std'] !== null ? (int)$nrow['gem_std'] : null,
+                'gem_ord'   => $nrow['gem_ord'] !== null ? (int)$nrow['gem_ord'] : null,
+                'created_at'=> (string)$nrow['created_at'],
+            ];
+        }
+    } catch (Throwable $e) {
+        error_log('Gematria public notes search error: ' . $e->getMessage());
+    }
+
     return [
         'groups'     => $groups_list,
+        'public_notes' => $public_notes,
         'truncated'  => $truncated,
         'form_count' => count($groups_list),
         'total_occ'  => array_sum(array_map(fn($g) => count($g['verses']), $groups_list)),
+        'note_count' => count($public_notes),
     ];
 }
 

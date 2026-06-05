@@ -16,6 +16,49 @@ require_once __DIR__ . '/search_lib.php';
 require_once __DIR__ . '/els_lib.php';
 require_once __DIR__ . '/helpers.php';
 
+function api_proxy_secret(): string {
+    static $secret = null;
+    if ($secret !== null) return $secret;
+    $cfg_path = __DIR__ . '/config.php';
+    if (!file_exists($cfg_path)) {
+        $secret = '';
+        return $secret;
+    }
+    $cfg = require $cfg_path;
+    $secret = trim((string)($cfg['remote_api_proxy_secret'] ?? ''));
+    return $secret;
+}
+
+function api_verify_proxy_signature(string $endpoint, array $post): bool {
+    $secret = api_proxy_secret();
+    if ($secret === '') {
+        return false;
+    }
+    $sig = (string)($post['proxy_sig'] ?? '');
+    $tsRaw = $post['proxy_ts'] ?? null;
+    if ($sig === '' || $tsRaw === null || $tsRaw === '') {
+        return false;
+    }
+
+    $ts = (int)$tsRaw;
+    if ($ts <= 0) {
+        return false;
+    }
+    if (abs(time() - $ts) > 300) {
+        return false;
+    }
+
+    $signedData = $post;
+    unset($signedData['proxy_sig']);
+    unset($signedData['api']);
+    ksort($signedData);
+    $canonical = http_build_query($signedData, '', '&', PHP_QUERY_RFC3986);
+    $payload = $endpoint . "\n" . $ts . "\n" . $canonical;
+    $expected = hash_hmac('sha256', $payload, $secret);
+
+    return hash_equals($expected, $sig);
+}
+
 header('Content-Type: application/json; charset=utf-8');
 try {
     $api_is_lxx = static function (string $book): bool {
@@ -127,7 +170,23 @@ try {
 
         case 'search_gematria':
             $value = (int)($_GET['value'] ?? 0);
-            echo json_encode(bible_search_gematria($value));
+            $isProxy = !empty($_GET['proxy_user_id']) && !empty($_GET['proxy_username']);
+            if ($isProxy) {
+                if (!api_verify_proxy_signature('search_gematria', $_GET)) {
+                    http_response_code(403);
+                    echo json_encode(['error' => 'invalid proxy signature']);
+                    break;
+                }
+                $u = [
+                    'id'       => (int)$_GET['proxy_user_id'],
+                    'name'     => trim((string)$_GET['proxy_username']),
+                    'is_guest' => false,
+                    'is_admin' => !empty($_GET['proxy_is_admin']),
+                ];
+            } else {
+                $u = get_bible_user();
+            }
+            echo json_encode(bible_search_gematria($value, $u));
             break;
 
         case 'search_verses':
@@ -152,6 +211,11 @@ try {
             break;
 
         case 'verse_notes':
+            if (!bible_notes_enabled()) {
+                http_response_code(403);
+                echo json_encode(['error' => 'notes feature disabled']);
+                break;
+            }
             $book = trim($_GET['book'] ?? '');
             $chap = (int)($_GET['chapter'] ?? 0);
             $vrs  = (int)($_GET['verse'] ?? 0);
@@ -170,7 +234,17 @@ try {
             break;
 
         case 'create_verse_note':
+            if (!bible_notes_enabled()) {
+                http_response_code(403);
+                echo json_encode(['error' => 'notes feature disabled']);
+                break;
+            }
             $isProxy = !empty($_REQUEST['proxy_user_id']) && !empty($_REQUEST['proxy_username']);
+            if ($isProxy && !api_verify_proxy_signature('create_verse_note', $_POST)) {
+                http_response_code(403);
+                echo json_encode(['error' => 'invalid proxy signature']);
+                break;
+            }
             if (!$isProxy && !validate_csrf_token()) {
                 http_response_code(403);
                 echo json_encode(['error' => 'csrf token validation failed']);
@@ -182,6 +256,7 @@ try {
                     'id'       => (int)$_REQUEST['proxy_user_id'],
                     'name'     => trim($_REQUEST['proxy_username']),
                     'is_guest' => false,
+                    'is_admin' => !empty($_REQUEST['proxy_is_admin']),
                 ];
             } else {
                 $u = get_bible_user();
@@ -237,6 +312,7 @@ try {
                     'gem_red'       => $gred !== null ? $gred : '',
                     'proxy_user_id' => $u['id'],
                     'proxy_username' => $u['name'],
+                    'proxy_is_admin' => !empty($u['is_admin']) ? 1 : 0,
                 ];
                 $resp = remote_api_call('create_verse_note', [], 'POST', $proxyData);
                 if ($resp && !empty($resp['success'])) {
@@ -257,7 +333,17 @@ try {
             break;
 
         case 'update_verse_note':
+            if (!bible_notes_enabled()) {
+                http_response_code(403);
+                echo json_encode(['error' => 'notes feature disabled']);
+                break;
+            }
             $isProxy = !empty($_REQUEST['proxy_user_id']) && !empty($_REQUEST['proxy_username']);
+            if ($isProxy && !api_verify_proxy_signature('update_verse_note', $_POST)) {
+                http_response_code(403);
+                echo json_encode(['error' => 'invalid proxy signature']);
+                break;
+            }
             if (!$isProxy && !validate_csrf_token()) {
                 http_response_code(403);
                 echo json_encode(['error' => 'csrf token validation failed']);
@@ -268,6 +354,7 @@ try {
                     'id'       => (int)$_REQUEST['proxy_user_id'],
                     'name'     => trim($_REQUEST['proxy_username']),
                     'is_guest' => false,
+                    'is_admin' => !empty($_REQUEST['proxy_is_admin']),
                 ];
             } else {
                 $u = get_bible_user();
@@ -322,6 +409,7 @@ try {
                     'gem_red'       => $gred !== null ? $gred : '',
                     'proxy_user_id' => $u['id'],
                     'proxy_username' => $u['name'],
+                    'proxy_is_admin' => !empty($u['is_admin']) ? 1 : 0,
                 ];
                 $resp = remote_api_call('update_verse_note', [], 'POST', $proxyData);
                 if ($resp && !empty($resp['success'])) {
@@ -342,7 +430,17 @@ try {
             break;
 
         case 'delete_verse_note':
+            if (!bible_notes_enabled()) {
+                http_response_code(403);
+                echo json_encode(['error' => 'notes feature disabled']);
+                break;
+            }
             $isProxy = !empty($_REQUEST['proxy_user_id']) && !empty($_REQUEST['proxy_username']);
+            if ($isProxy && !api_verify_proxy_signature('delete_verse_note', $_POST)) {
+                http_response_code(403);
+                echo json_encode(['error' => 'invalid proxy signature']);
+                break;
+            }
             if (!$isProxy && !validate_csrf_token()) {
                 http_response_code(403);
                 echo json_encode(['error' => 'csrf token validation failed']);
@@ -353,6 +451,7 @@ try {
                     'id'       => (int)$_REQUEST['proxy_user_id'],
                     'name'     => trim($_REQUEST['proxy_username']),
                     'is_guest' => false,
+                    'is_admin' => !empty($_REQUEST['proxy_is_admin']),
                 ];
             } else {
                 $u = get_bible_user();
@@ -374,6 +473,7 @@ try {
                     'id' => $note_id,
                     'proxy_user_id' => $u['id'],
                     'proxy_username' => $u['name'],
+                    'proxy_is_admin' => !empty($u['is_admin']) ? 1 : 0,
                 ];
                 $resp = remote_api_call('delete_verse_note', [], 'POST', $proxyData);
                 if ($resp && !empty($resp['success'])) {
@@ -390,6 +490,72 @@ try {
                 echo json_encode(['success' => true]);
             } else {
                 echo json_encode(['error' => 'failed to delete note (not owner or db error)']);
+            }
+            break;
+
+        case 'set_verse_note_visibility':
+            if (!bible_notes_enabled()) {
+                http_response_code(403);
+                echo json_encode(['error' => 'notes feature disabled']);
+                break;
+            }
+            $isProxy = !empty($_REQUEST['proxy_user_id']) && !empty($_REQUEST['proxy_username']);
+            if ($isProxy && !api_verify_proxy_signature('set_verse_note_visibility', $_POST)) {
+                http_response_code(403);
+                echo json_encode(['error' => 'invalid proxy signature']);
+                break;
+            }
+            if (!$isProxy && !validate_csrf_token()) {
+                http_response_code(403);
+                echo json_encode(['error' => 'csrf token validation failed']);
+                break;
+            }
+            if ($isProxy) {
+                $u = [
+                    'id'       => (int)$_REQUEST['proxy_user_id'],
+                    'name'     => trim($_REQUEST['proxy_username']),
+                    'is_guest' => false,
+                    'is_admin' => !empty($_REQUEST['proxy_is_admin']),
+                ];
+            } else {
+                $u = get_bible_user();
+            }
+            if ($u['is_guest'] || empty($u['is_admin'])) {
+                http_response_code(403);
+                echo json_encode(['error' => 'admin required']);
+                break;
+            }
+            $note_id = (int)($_REQUEST['id'] ?? 0);
+            $is_public = !empty($_REQUEST['is_public']) ? 1 : 0;
+            if ($note_id <= 0) {
+                http_response_code(400);
+                echo json_encode(['error' => 'id required']);
+                break;
+            }
+
+            if (should_use_remote_api()) {
+                $proxyData = [
+                    'id' => $note_id,
+                    'is_public' => $is_public,
+                    'proxy_user_id' => $u['id'],
+                    'proxy_username' => $u['name'],
+                    'proxy_is_admin' => !empty($u['is_admin']) ? 1 : 0,
+                ];
+                $resp = remote_api_call('set_verse_note_visibility', [], 'POST', $proxyData);
+                if ($resp && !empty($resp['success'])) {
+                    echo json_encode(['success' => true]);
+                } else {
+                    $err = (is_array($resp) && !empty($resp['error'])) ? $resp['error'] : 'remote note visibility update failed';
+                    echo json_encode(['error' => $err]);
+                }
+                break;
+            }
+
+            $ok = set_verse_note_visibility($note_id, $u, $is_public);
+            if ($ok) {
+                echo json_encode(['success' => true]);
+            } else {
+                echo json_encode(['error' => 'failed to update note visibility']);
             }
             break;
 

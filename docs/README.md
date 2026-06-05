@@ -61,6 +61,7 @@ If you want to run the full stack locally:
 ## Documentation
 
 - **`docs/HANDOFF-current.md`** — Recommended starting point (current workflows, single source of truth for DB name, easy fresh database creation).
+- **`docs/NOTES_GEMATRIA_QA.md`** — QA and smoke-test checklist for notes visibility + gematria search behavior.
 - **Root `HANDOFF.md`** — Historical/archival notes from earlier development sessions (still useful for deep context).
 - **`web/HANDOFF.md`** — Details about the web UI, JavaScript components, and frontend architecture.
 

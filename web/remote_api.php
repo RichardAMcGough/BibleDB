@@ -26,7 +26,68 @@ function remote_api_base(): string {
     return $base;
 }
 
+function remote_api_proxy_secret(): string {
+    static $secret = null;
+    if ($secret !== null) return $secret;
+
+    $cfg_path = __DIR__ . '/config.php';
+    if (!file_exists($cfg_path)) {
+        $secret = '';
+        return $secret;
+    }
+    $cfg = require $cfg_path;
+    $secret = trim((string)($cfg['remote_api_proxy_secret'] ?? ''));
+    return $secret;
+}
+
+function remote_api_sign_proxy_payload(string $endpoint, array &$postData): void {
+    if (empty($postData['proxy_user_id']) || empty($postData['proxy_username'])) {
+        return;
+    }
+
+    $secret = remote_api_proxy_secret();
+    if ($secret === '') {
+        error_log('Remote proxy note write attempted without remote_api_proxy_secret.');
+        return;
+    }
+
+    $ts = time();
+    $signedData = $postData;
+    unset($signedData['proxy_sig'], $signedData['proxy_ts']);
+    ksort($signedData);
+    $canonical = http_build_query($signedData, '', '&', PHP_QUERY_RFC3986);
+    $payload = $endpoint . "\n" . $ts . "\n" . $canonical;
+
+    $postData['proxy_ts'] = $ts;
+    $postData['proxy_sig'] = hash_hmac('sha256', $payload, $secret);
+}
+
+function remote_api_sign_proxy_params(string $endpoint, array &$params): void {
+    if (empty($params['proxy_user_id']) || empty($params['proxy_username'])) {
+        return;
+    }
+
+    $secret = remote_api_proxy_secret();
+    if ($secret === '') {
+        error_log('Remote proxy GET attempted without remote_api_proxy_secret.');
+        return;
+    }
+
+    $ts = time();
+    $signed = $params;
+    unset($signed['proxy_sig'], $signed['proxy_ts']);
+    ksort($signed);
+    $canonical = http_build_query($signed, '', '&', PHP_QUERY_RFC3986);
+    $payload = $endpoint . "\n" . $ts . "\n" . $canonical;
+
+    $params['proxy_ts'] = $ts;
+    $params['proxy_sig'] = hash_hmac('sha256', $payload, $secret);
+}
+
 function remote_api_call(string $endpoint, array $params = [], string $method = 'GET', array $postData = []): ?array {
+    if (strtoupper($method) === 'GET') {
+        remote_api_sign_proxy_params($endpoint, $params);
+    }
     $base = remote_api_base();
     $url = $base . '/api.php?' . http_build_query(array_merge(['api' => $endpoint], $params));
 
@@ -40,6 +101,7 @@ function remote_api_call(string $endpoint, array $params = [], string $method = 
     ];
 
     if (strtoupper($method) === 'POST') {
+        remote_api_sign_proxy_payload($endpoint, $postData);
         $body = http_build_query($postData);
         $opts['http']['content'] = $body;
         $opts['http']['header'] .= "Content-Type: application/x-www-form-urlencoded\r\n";
