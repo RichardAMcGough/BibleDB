@@ -94,6 +94,52 @@ function bible_render_layout_banner(): void {
 }
 
 /**
+ * Build phpBB login URL with redirect back to the current page.
+ * Returns empty string when phpbb_url is not configured.
+ */
+function bible_phpbb_login_url(?string $phpbb_url = null): string {
+    static $cfg = null;
+    if ($phpbb_url === null) {
+        if ($cfg === null) {
+            $cfg_path = __DIR__ . '/config.php';
+            $cfg = file_exists($cfg_path) ? require $cfg_path : [];
+        }
+        $phpbb_url = trim($cfg['phpbb_url'] ?? '');
+    } else {
+        $phpbb_url = trim($phpbb_url);
+    }
+
+    if ($phpbb_url === '') return '';
+
+    $login_url = rtrim($phpbb_url, '/') . '/ucp.php?mode=login';
+    $req_uri = (string)($_SERVER['REQUEST_URI'] ?? '');
+    if ($req_uri === '') return $login_url;
+
+    // Keep redirect relative to this host/path and avoid absolute URLs.
+    if ($req_uri[0] !== '/') {
+        $req_uri = '/' . ltrim($req_uri, '/');
+    }
+
+    return $login_url . '&redirect=' . rawurlencode($req_uri);
+}
+
+/**
+ * Feature flag for verse notes UI/API.
+ * Defaults to true when key is not present.
+ */
+function bible_notes_enabled(): bool {
+    static $cfg = null;
+    if ($cfg === null) {
+        $cfg_path = __DIR__ . '/config.php';
+        $cfg = file_exists($cfg_path) ? require $cfg_path : [];
+    }
+    if (!array_key_exists('enable_notes', $cfg)) {
+        return true;
+    }
+    return !empty($cfg['enable_notes']);
+}
+
+/**
  * Emit a small "logged in as" badge.
  * $inflow=true  → plain inline element (placed inside a flex banner by the caller).
  * $inflow=false → position:fixed top-right overlay (used with the external production banner).
@@ -118,10 +164,10 @@ function bible_render_user_badge(bool $inflow = true): void {
     $cls_fixed = $inflow ? '' : ' bible-user-badge--fixed';
     if ($user['is_guest']) {
         // Show a "Log in" link when phpBB URL is known; otherwise nothing.
-        if ($phpbb_url === '') return;
-        $login_url = htmlspecialchars(rtrim($phpbb_url, '/') . '/ucp.php?mode=login', ENT_QUOTES, 'UTF-8');
+        $login_url = bible_phpbb_login_url($phpbb_url);
+        if ($login_url === '') return;
         echo '<div class="bible-user-badge bible-user-badge--guest' . $cls_fixed . '">';
-        echo '<a href="' . $login_url . '">Log in</a>';
+        echo '<a href="' . htmlspecialchars($login_url, ENT_QUOTES, 'UTF-8') . '">Log in</a>';
         echo '</div>';
         return;
     }

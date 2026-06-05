@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
 $_help_cfg = file_exists(__DIR__ . '/config.php') ? require __DIR__ . '/config.php' : [];
 $_help_forum_url = htmlspecialchars(rtrim($_help_cfg['phpbb_url'] ?? '', '/'), ENT_QUOTES, 'UTF-8');

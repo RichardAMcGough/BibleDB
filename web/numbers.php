@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
 bible_render_layout_header();
 ?>
