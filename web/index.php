@@ -503,10 +503,10 @@ if ($actual_count > 0) {
                 <input type="hidden" id="notes-verse">
                 <label>Type (select all that apply):</label>
                 <div class="notes-type-checks">
-                    <label><input type="checkbox" class="notes-type-cb" value="1" checked> General (commentary)</label>
+                    <label><input type="checkbox" class="notes-type-cb" value="1"> General (commentary)</label>
                     <label><input type="checkbox" class="notes-type-cb" value="2"> Bible Wheel</label>
                     <label><input type="checkbox" class="notes-type-cb" value="3"> Isaiah-Bible Correlation</label>
-                    <label><input type="checkbox" class="notes-type-cb" value="4"> Gematria</label>
+                    <label><input type="checkbox" class="notes-type-cb" value="4" checked> Gematria</label>
                 </div>
                 <?php if (!empty($user['is_admin'])): ?>
                 <div id="notes-public-wrap" style="margin-top:4px">
@@ -517,6 +517,7 @@ if ($actual_count > 0) {
                 <label>Note text (toolbar uses the same editor as phpBB forum posts):</label>
                 <?= render_bbcode_toolbar('notesform', 'message') ?>
                 <textarea id="notes-text" name="message" rows="8" placeholder="Your commentary or gematria observation..." onfocus="if(typeof initInsertions==='function')try{initInsertions();}catch(e){}" onclick="if(typeof storeCaret==='function')storeCaret(this);" onkeyup="if(typeof storeCaret==='function')storeCaret(this);"></textarea>
+                <input type="hidden" id="notes-selected-words" value="">
                 <div id="notes-gem-section" hidden>
                     <div>Gematria values (autofilled):</div>
                     <label>Std: <input type="number" id="notes-gem-std" size="6"></label>
@@ -578,6 +579,8 @@ if ($actual_count > 0) {
 #notes-gem-section { background: #f8f8f8; padding: 6px; margin: 6px 0; border-radius: 3px; }
 .notes-actions { margin-top: 8px; }
 .notes-actions button { margin-right: 6px; }
+.notes-toast { margin-top: 8px; padding: 6px 8px; border-radius: 4px; font-size: 12px; background: #e6f6ea; color: #14532d; border: 1px solid #9ed8ad; }
+.notes-toast[hidden] { display: none !important; }
 #notes-list { padding: 4px 0; font-size: 13px; }
 #notes-list .note-item { border-bottom: 1px solid #f0f0f0; padding: 6px 0; }
 #notes-list .note-item:last-child { border-bottom: none; }
@@ -695,6 +698,23 @@ const NOTES_IS_ADMIN  = <?= json_encode(!empty($user['is_admin'])) ?>;
     const closeBtn = document.getElementById('notes-modal-close');
     const addBtn = document.getElementById('notes-add-btn');
     const gemSec = document.getElementById('notes-gem-section');
+    let notesToastHideTimer = null;
+
+    function showNotesToast(msg, ms = 2200) {
+        if (!formWrap) return;
+        let toast = document.getElementById('notes-toast');
+        if (!toast) {
+            toast = document.createElement('div');
+            toast.id = 'notes-toast';
+            toast.className = 'notes-toast';
+            toast.hidden = true;
+            formWrap.appendChild(toast);
+        }
+        toast.textContent = msg;
+        toast.hidden = false;
+        if (notesToastHideTimer) clearTimeout(notesToastHideTimer);
+        notesToastHideTimer = setTimeout(() => { toast.hidden = true; }, ms);
+    }
 
     function showForm() { if (formWrap) formWrap.hidden = false; }
     function hideForm() { if (formWrap) formWrap.hidden = true; }
@@ -715,9 +735,10 @@ const NOTES_IS_ADMIN  = <?= json_encode(!empty($user['is_admin'])) ?>;
     function setCheckedTypes(types) {
         typeCbs.forEach(cb => { cb.checked = false; });
         if (!types || types.length === 0) {
-            // Default to General
-            const defCb = document.querySelector('.notes-type-cb[value="1"]');
+            // Default to Gematria
+            const defCb = document.querySelector('.notes-type-cb[value="4"]');
             if (defCb) defCb.checked = true;
+            if (gemSec) gemSec.hidden = !(gemCb && gemCb.checked);
             return;
         }
         // types is array of IDs (numbers) from server, e.g. [1, 4]
@@ -725,6 +746,7 @@ const NOTES_IS_ADMIN  = <?= json_encode(!empty($user['is_admin'])) ?>;
             const cb = document.querySelector('.notes-type-cb[value="' + t + '"]');
             if (cb) cb.checked = true;
         });
+        if (gemSec) gemSec.hidden = !(gemCb && gemCb.checked);
     }
 
     function renderNotesList(notes) {
@@ -810,6 +832,8 @@ const NOTES_IS_ADMIN  = <?= json_encode(!empty($user['is_admin'])) ?>;
         document.getElementById('notes-gem-std').value = (n.gem_std != null ? n.gem_std : '');
         document.getElementById('notes-gem-ord').value = (n.gem_ord != null ? n.gem_ord : '');
         document.getElementById('notes-gem-red').value = (n.gem_red != null ? n.gem_red : '');
+        const selEl = document.getElementById('notes-selected-words');
+        if (selEl) selEl.value = (n.selected_words || '');
         gemSec.hidden = !(gemCb && gemCb.checked);
         if (NOTES_IS_ADMIN) { const cb = document.getElementById('notes-is-public'); if (cb) cb.checked = !!n.is_public; }
         const subBtn = document.getElementById('notes-submit');
@@ -822,13 +846,15 @@ const NOTES_IS_ADMIN  = <?= json_encode(!empty($user['is_admin'])) ?>;
     function startNewNote() {
         editingNoteId = null;
         if (!form) return; // guest: form not rendered, nothing to reset
-        setCheckedTypes([1]); // default to General
+        setCheckedTypes([4]); // default to Gematria
         document.getElementById('notes-title').value = '';
         document.getElementById('notes-text').value = '';
         document.getElementById('notes-gem-std').value = '';
         document.getElementById('notes-gem-ord').value = '';
         document.getElementById('notes-gem-red').value = '';
-        if (gemSec) gemSec.hidden = true;
+        const selEl = document.getElementById('notes-selected-words');
+        if (selEl) selEl.value = '';
+        if (gemSec) gemSec.hidden = !(gemCb && gemCb.checked);
         if (NOTES_IS_ADMIN) { const cb = document.getElementById('notes-is-public'); if (cb) cb.checked = true; }
         const subBtn = document.getElementById('notes-submit');
         if (subBtn) subBtn.textContent = 'Save Note';
@@ -990,6 +1016,7 @@ const NOTES_IS_ADMIN  = <?= json_encode(!empty($user['is_admin'])) ?>;
             gem_std: document.getElementById('notes-gem-std').value || '',
             gem_ord: document.getElementById('notes-gem-ord').value || '',
             gem_red: document.getElementById('notes-gem-red').value || '',
+            selected_words: document.getElementById('notes-selected-words')?.value || '',
             is_public: (NOTES_IS_ADMIN && document.getElementById('notes-is-public')?.checked) ? 1 : 0,
             csrf_token: (typeof CSRF_TOKEN !== 'undefined' ? CSRF_TOKEN : '')
         });
@@ -1000,7 +1027,7 @@ const NOTES_IS_ADMIN  = <?= json_encode(!empty($user['is_admin'])) ?>;
             .then(r => r.json())
             .then(resp => {
                 if (resp.success) {
-                    alert('Note saved! Thank you for contributing to the commentary.');
+                    showNotesToast('Note saved successfully.');
                     if (currentVerse) {
                         refreshNotesList(currentVerse.book, currentVerse.ch, currentVerse.vs);
                         updateVerseCountBadge(currentVerse.book, currentVerse.ch, currentVerse.vs);
@@ -1031,6 +1058,51 @@ const NOTES_IS_ADMIN  = <?= json_encode(!empty($user['is_admin'])) ?>;
         return {std: s, ord: o, red: r};
     }
 
+    function optionEnabled(optKey, fallback) {
+        const box = document.querySelector('input[type="checkbox"][data-opt="' + optKey + '"]');
+        if (box) return !!box.checked;
+        return !!fallback;
+    }
+
+    function fillGemInputsFromOptions(g) {
+        const stdOn = optionEnabled('gem-std', true);
+        const ordOn = optionEnabled('gem-ord', false);
+        const redOn = optionEnabled('gem-red', false);
+
+        const stdEl = document.getElementById('notes-gem-std');
+        const ordEl = document.getElementById('notes-gem-ord');
+        const redEl = document.getElementById('notes-gem-red');
+        if (stdEl) stdEl.value = stdOn ? g.std : '';
+        if (ordEl) ordEl.value = ordOn ? g.ord : '';
+        if (redEl) redEl.value = redOn ? g.red : '';
+    }
+
+    function persistSelectionToUrl(selCells) {
+        const positions = Array.from(selCells)
+            .map(c => parseInt(c.dataset.pos || '0', 10))
+            .filter(n => Number.isFinite(n) && n > 0)
+            .sort((a, b) => a - b);
+        if (!positions.length) return;
+
+        const selectedCsv = positions.join(',');
+        const selEl = document.getElementById('notes-selected-words');
+        if (selEl) selEl.value = selectedCsv;
+
+        const params = new URLSearchParams(window.location.search);
+        params.set('selected', selectedCsv);
+
+        // Keep the currently resolved edition in deep links when available.
+        const interlinear = document.getElementById('interlinear');
+        if (interlinear && interlinear.dataset && interlinear.dataset.edition) {
+            params.set('edition', interlinear.dataset.edition);
+        }
+
+        const nextUrl = window.location.pathname
+            + (params.toString() ? ('?' + params.toString()) : '')
+            + (window.location.hash || '');
+        window.history.replaceState(null, '', nextUrl);
+    }
+
     const fillVerseBtn = document.getElementById('notes-fill-verse');
     if (fillVerseBtn) fillVerseBtn.addEventListener('click', () => {
         if (!currentVerse) return;
@@ -1038,9 +1110,9 @@ const NOTES_IS_ADMIN  = <?= json_encode(!empty($user['is_admin'])) ?>;
         if (!block) return;
         const cells = block.querySelectorAll('.word-cell');
         const g = sumGems(cells);
-        document.getElementById('notes-gem-std').value = g.std;
-        document.getElementById('notes-gem-ord').value = g.ord;
-        document.getElementById('notes-gem-red').value = g.red;
+        fillGemInputsFromOptions(g);
+        const selEl = document.getElementById('notes-selected-words');
+        if (selEl) selEl.value = '';
     });
 
     const fillSelBtn = document.getElementById('notes-fill-sel');
@@ -1050,10 +1122,9 @@ const NOTES_IS_ADMIN  = <?= json_encode(!empty($user['is_admin'])) ?>;
             alert('No words selected. Click or S+drag to select words first, or use "Fill from verse".');
             return;
         }
+        persistSelectionToUrl(selCells);
         const g = sumGems(selCells);
-        document.getElementById('notes-gem-std').value = g.std;
-        document.getElementById('notes-gem-ord').value = g.ord;
-        document.getElementById('notes-gem-red').value = g.red;
+        fillGemInputsFromOptions(g);
     });
 
     // Wire up all +note buttons (they exist in the static HTML from PHP)

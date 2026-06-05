@@ -187,7 +187,7 @@ function bible_search_gematria(int $gem_value, ?array $user = null): array {
 
             $nsql = "SELECT vn.id, vn.user_id, vn.book_code, vn.chapter, vn.verse,
                             vn.title, vn.note_text, vn.username, vn.is_public,
-                            vn.gem_std, vn.gem_ord, vn.created_at
+                           vn.gem_std, vn.gem_ord, vn.selected_words, vn.created_at
                        FROM verse_notes vn
                       WHERE (vn.gem_std = ? OR vn.gem_ord = ?)";
             $nparams = [$gem_value, $gem_value];
@@ -219,6 +219,7 @@ function bible_search_gematria(int $gem_value, ?array $user = null): array {
                     'is_public' => (int)$nrow['is_public'],
                 'gem_std'   => $nrow['gem_std'] !== null ? (int)$nrow['gem_std'] : null,
                 'gem_ord'   => $nrow['gem_ord'] !== null ? (int)$nrow['gem_ord'] : null,
+                'selected_words' => (string)($nrow['selected_words'] ?? ''),
                 'created_at'=> (string)$nrow['created_at'],
             ];
         }

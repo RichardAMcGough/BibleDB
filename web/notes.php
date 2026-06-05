@@ -121,6 +121,10 @@ $_login_url = bible_phpbb_login_url($_cfg['phpbb_url'] ?? '');
           $href = 'index.php?book=' . urlencode($n['book_code'])
                 . '&chapter=' . (int)$n['chapter']
                 . '&verse='   . (int)$n['verse'];
+          $sel = trim((string)($n['selected_words'] ?? ''));
+          if ($sel !== '') {
+            $href .= '&selected=' . urlencode($sel);
+          }
           $ref = h($n['book_code']) . ' ' . (int)$n['chapter'] . ':' . (int)$n['verse'];
       ?>
         <tr>

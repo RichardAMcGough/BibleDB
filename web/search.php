@@ -183,18 +183,26 @@ if ($mode === 'gematria') {
     $n_vs   = (int)($n['verse'] ?? 0);
     $n_url  = 'index.php?book=' . urlencode($n_code)
             . '&chapter=' . $n_ch . '&verse=' . $n_vs;
+    $n_sel  = trim((string)($n['selected_words'] ?? ''));
+    if ($n_sel !== '') {
+        $n_url .= '&selected=' . urlencode($n_sel);
+    }
     $n_ref  = h($n['book_name'] ?? $n_code) . ' ' . $n_ch . ':' . $n_vs;
     $is_private = empty($n['is_public']);
     $std    = ($n['gem_std'] ?? null);
     $ord    = ($n['gem_ord'] ?? null);
     $g_bits = [];
-    $g_bits[] = 'std: ' . ($std !== null ? (int)$std : '&mdash;');
-    $g_bits[] = 'ord: ' . ($ord !== null ? (int)$ord : '&mdash;');
+    if ($std !== null && (int)$std === (int)$gem_value) {
+        $g_bits[] = 'std: ' . (int)$std;
+    }
+    if ($ord !== null && (int)$ord === (int)$gem_value) {
+        $g_bits[] = 'ord: ' . (int)$ord;
+    }
 ?>
     <tr>
         <td class="search-book"><a href="<?= h($n_url) ?>" class="verse-ref" data-book="<?= h($n_code) ?>" data-chapter="<?= $n_ch ?>" data-verse="<?= $n_vs ?>"><?= $n_ref ?></a></td>
         <td class="gem-word-cell"><strong><?= h($n['title'] ?? '') ?></strong><?= $is_private ? ' <span class="note-private-badge" title="Private note">&#x1F512;</span>' : '' ?><br><span class="gem-eng">by <?= h($n['username'] ?? 'Unknown') ?></span></td>
-        <td class="gem-count-col"><?= implode('<br>', $g_bits) ?></td>
+        <td class="gem-count-col"><?= !empty($g_bits) ? implode('<br>', $g_bits) : '&mdash;' ?></td>
         <td class="search-verses"><?= bbcode_to_html($n['note_text'] ?? '') ?></td>
     </tr>
 <?php endforeach; ?>

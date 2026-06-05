@@ -298,6 +298,12 @@ try {
             $gstd   = (($_REQUEST['gem_std'] ?? '') !== '') ? (int)$_REQUEST['gem_std'] : null;
             $gord   = (($_REQUEST['gem_ord'] ?? '') !== '') ? (int)$_REQUEST['gem_ord'] : null;
             $gred   = (($_REQUEST['gem_red'] ?? '') !== '') ? (int)$_REQUEST['gem_red'] : null;
+            $selRaw = trim((string)($_REQUEST['selected_words'] ?? ''));
+            $selected_words = preg_replace('/[^0-9,]/', '', $selRaw);
+            if ($selected_words !== '') {
+                $selected_words = trim(preg_replace('/,+/', ',', $selected_words), ',');
+            }
+            if ($selected_words === '') $selected_words = null;
             // is_public: only honoured for admins; non-admins always 0.
             $is_public = (!empty($u['is_admin']) && !empty($_REQUEST['is_public'])) ? 1 : 0;
 
@@ -329,6 +335,7 @@ try {
                     'gem_std'       => $gstd !== null ? $gstd : '',
                     'gem_ord'       => $gord !== null ? $gord : '',
                     'gem_red'       => $gred !== null ? $gred : '',
+                    'selected_words' => $selected_words ?? '',
                     'proxy_user_id' => $u['id'],
                     'proxy_username' => $u['name'],
                     'proxy_is_admin' => !empty($u['is_admin']) ? 1 : 0,
@@ -343,7 +350,7 @@ try {
                 break;
             }
 
-            $ok = create_verse_note($u, $book, $chap, $vrs, $type_ids, $title, $text, $gstd, $gord, $gred, $is_public);
+            $ok = create_verse_note($u, $book, $chap, $vrs, $type_ids, $title, $text, $gstd, $gord, $gred, $is_public, $selected_words);
             if ($ok) {
                 echo json_encode(['success' => true]);
             } else {
@@ -397,6 +404,12 @@ try {
             $gstd   = (($_REQUEST['gem_std'] ?? '') !== '') ? (int)$_REQUEST['gem_std'] : null;
             $gord   = (($_REQUEST['gem_ord'] ?? '') !== '') ? (int)$_REQUEST['gem_ord'] : null;
             $gred   = (($_REQUEST['gem_red'] ?? '') !== '') ? (int)$_REQUEST['gem_red'] : null;
+            $selRaw = trim((string)($_REQUEST['selected_words'] ?? ''));
+            $selected_words = preg_replace('/[^0-9,]/', '', $selRaw);
+            if ($selected_words !== '') {
+                $selected_words = trim(preg_replace('/,+/', ',', $selected_words), ',');
+            }
+            if ($selected_words === '') $selected_words = null;
             $is_public = (!empty($u['is_admin']) && !empty($_REQUEST['is_public'])) ? 1 : 0;
 
             if (!$note_id || !$book || !$chap || !$vrs || !$title || $text === '') {
@@ -427,6 +440,7 @@ try {
                     'gem_std'       => $gstd !== null ? $gstd : '',
                     'gem_ord'       => $gord !== null ? $gord : '',
                     'gem_red'       => $gred !== null ? $gred : '',
+                    'selected_words' => $selected_words ?? '',
                     'proxy_user_id' => $u['id'],
                     'proxy_username' => $u['name'],
                     'proxy_is_admin' => !empty($u['is_admin']) ? 1 : 0,
@@ -441,7 +455,7 @@ try {
                 break;
             }
 
-            $ok = update_verse_note($note_id, $u, $book, $chap, $vrs, $type_ids, $title, $text, $gstd, $gord, $gred, $is_public);
+            $ok = update_verse_note($note_id, $u, $book, $chap, $vrs, $type_ids, $title, $text, $gstd, $gord, $gred, $is_public, $selected_words);
             if ($ok) {
                 echo json_encode(['success' => true]);
             } else {

@@ -396,6 +396,28 @@ function _note_proc_exists(string $proc_name): bool {
     return $cache[$proc_name];
 }
 
+function _note_column_exists(string $column_name): bool {
+    static $cache = [];
+    if (array_key_exists($column_name, $cache)) {
+        return $cache[$column_name];
+    }
+    try {
+        $pdo = bible_pdo();
+        $stmt = $pdo->prepare(
+            "SELECT COUNT(*)
+               FROM information_schema.COLUMNS
+              WHERE TABLE_SCHEMA = DATABASE()
+                AND TABLE_NAME = 'verse_notes'
+                AND COLUMN_NAME = ?"
+        );
+        $stmt->execute([$column_name]);
+        $cache[$column_name] = ((int)$stmt->fetchColumn()) > 0;
+    } catch (Throwable $e) {
+        $cache[$column_name] = false;
+    }
+    return $cache[$column_name];
+}
+
 function _note_proc_call(string $proc_name, array $params): array {
     if (!preg_match('/^[A-Za-z0-9_]+$/', $proc_name)) {
         return ['ok' => false, 'error' => 'invalid procedure name'];
@@ -445,9 +467,12 @@ function get_verse_notes(string $book_code, int $chapter, int $verse, array $use
         $is_guest = empty($user['id']) || !empty($user['is_guest']);
         $uid = (int)($user['id'] ?? 0);
 
-        $sql = "
-            SELECT vn.id, vn.user_id, vn.username, vn.title, vn.note_text, vn.is_public,
-                   vn.gem_std, vn.gem_ord, vn.gem_red, vn.created_at, vn.updated_at,
+         $has_selected_words = _note_column_exists('selected_words');
+         $sel_col = $has_selected_words ? 'vn.selected_words,' : "'' AS selected_words,";
+         $sql = "
+             SELECT vn.id, vn.user_id, vn.username, vn.title, vn.note_text, vn.is_public,
+                 {$sel_col}
+                 vn.gem_std, vn.gem_ord, vn.gem_red, vn.created_at, vn.updated_at,
                    GROUP_CONCAT(nt.name  ORDER BY nt.id SEPARATOR ',') AS types_csv,
                    GROUP_CONCAT(nt.id    ORDER BY nt.id SEPARATOR ',') AS type_ids_csv
             FROM verse_notes vn
@@ -495,7 +520,7 @@ function get_verse_notes(string $book_code, int $chapter, int $verse, array $use
 function create_verse_note(array $user, string $book_code, int $chapter, int $verse,
                            array $type_ids, string $title, string $note_text,
                            ?int $gem_std = null, ?int $gem_ord = null, ?int $gem_red = null,
-                           int $is_public = 0): bool {
+                           int $is_public = 0, ?string $selected_words = null): bool {
     set_note_last_error('');
     if (should_use_remote_api()) {
         set_note_last_error('local note writes are disabled while use_remote_api is true');
@@ -518,6 +543,8 @@ function create_verse_note(array $user, string $book_code, int $chapter, int $ve
         set_note_last_error('title or note text exceeds allowed size');
         return false;
     }
+    $selected_words = is_string($selected_words) ? trim($selected_words) : null;
+    if ($selected_words === '') $selected_words = null;
 
     $type_ids_csv = implode(',', $type_ids);
     if (_note_proc_exists('sp_create_verse_note')) {
@@ -525,8 +552,18 @@ function create_verse_note(array $user, string $book_code, int $chapter, int $ve
             (int)$user['id'], (string)$user['name'], $book_code, $chapter, $verse,
             $title, $note_text, $is_public ? 1 : 0,
             $gem_std, $gem_ord, $gem_red,
+            $selected_words,
             $type_ids_csv,
         ]);
+        if (empty($resp['ok']) && stripos((string)($resp['error'] ?? ''), 'incorrect number of arguments') !== false) {
+            // Backward compatibility with older procedure signature.
+            $resp = _note_proc_call('sp_create_verse_note', [
+                (int)$user['id'], (string)$user['name'], $book_code, $chapter, $verse,
+                $title, $note_text, $is_public ? 1 : 0,
+                $gem_std, $gem_ord, $gem_red,
+                $type_ids_csv,
+            ]);
+        }
         if (!empty($resp['ok'])) {
             return true;
         }
@@ -538,17 +575,32 @@ function create_verse_note(array $user, string $book_code, int $chapter, int $ve
     try {
         $pdo = bible_pdo();
         $pdo->beginTransaction();
-        $stmt = $pdo->prepare("
-            INSERT INTO verse_notes
-                (user_id, username, book_code, chapter, verse, title, note_text, is_public,
-                 gem_std, gem_ord, gem_red)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ");
-        $stmt->execute([
-            $user['id'], $user['name'], $book_code, $chapter, $verse,
-            $title, $note_text, $is_public,
-            $gem_std, $gem_ord, $gem_red
-        ]);
+        if (_note_column_exists('selected_words')) {
+            $stmt = $pdo->prepare("
+                INSERT INTO verse_notes
+                    (user_id, username, book_code, chapter, verse, title, note_text, is_public,
+                     gem_std, gem_ord, gem_red, selected_words)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ");
+            $stmt->execute([
+                $user['id'], $user['name'], $book_code, $chapter, $verse,
+                $title, $note_text, $is_public,
+                $gem_std, $gem_ord, $gem_red,
+                $selected_words
+            ]);
+        } else {
+            $stmt = $pdo->prepare("
+                INSERT INTO verse_notes
+                    (user_id, username, book_code, chapter, verse, title, note_text, is_public,
+                     gem_std, gem_ord, gem_red)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ");
+            $stmt->execute([
+                $user['id'], $user['name'], $book_code, $chapter, $verse,
+                $title, $note_text, $is_public,
+                $gem_std, $gem_ord, $gem_red
+            ]);
+        }
         $note_id = (int)$pdo->lastInsertId();
         $junc = $pdo->prepare('INSERT IGNORE INTO verse_note_types (note_id, type_id) VALUES (?, ?)');
         foreach ($type_ids as $tid) {
@@ -571,7 +623,7 @@ function create_verse_note(array $user, string $book_code, int $chapter, int $ve
 function update_verse_note(int $note_id, array $user, string $book_code, int $chapter, int $verse,
                            array $type_ids, string $title, string $note_text,
                            ?int $gem_std = null, ?int $gem_ord = null, ?int $gem_red = null,
-                           int $is_public = 0): bool {
+                           int $is_public = 0, ?string $selected_words = null): bool {
     set_note_last_error('');
     if (should_use_remote_api()) {
         set_note_last_error('local note writes are disabled while use_remote_api is true');
@@ -593,6 +645,8 @@ function update_verse_note(int $note_id, array $user, string $book_code, int $ch
         set_note_last_error('title or note text exceeds allowed size');
         return false;
     }
+    $selected_words = is_string($selected_words) ? trim($selected_words) : null;
+    if ($selected_words === '') $selected_words = null;
 
     $type_ids_csv = implode(',', $type_ids);
     if (_note_proc_exists('sp_update_verse_note')) {
@@ -600,8 +654,18 @@ function update_verse_note(int $note_id, array $user, string $book_code, int $ch
             $note_id, (int)$user['id'], $book_code, $chapter, $verse,
             $title, $note_text, $is_public ? 1 : 0,
             $gem_std, $gem_ord, $gem_red,
+            $selected_words,
             $type_ids_csv,
         ]);
+        if (empty($resp['ok']) && stripos((string)($resp['error'] ?? ''), 'incorrect number of arguments') !== false) {
+            // Backward compatibility with older procedure signature.
+            $resp = _note_proc_call('sp_update_verse_note', [
+                $note_id, (int)$user['id'], $book_code, $chapter, $verse,
+                $title, $note_text, $is_public ? 1 : 0,
+                $gem_std, $gem_ord, $gem_red,
+                $type_ids_csv,
+            ]);
+        }
         if (!empty($resp['ok'])) {
             return true;
         }
@@ -613,17 +677,31 @@ function update_verse_note(int $note_id, array $user, string $book_code, int $ch
     try {
         $pdo = bible_pdo();
         $pdo->beginTransaction();
-        $stmt = $pdo->prepare("
-            UPDATE verse_notes
-            SET title = ?, note_text = ?, is_public = ?,
-                gem_std = ?, gem_ord = ?, gem_red = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ? AND user_id = ?
-        ");
-        $stmt->execute([
-            $title, $note_text, $is_public,
-            $gem_std, $gem_ord, $gem_red,
-            $note_id, $user['id']
-        ]);
+        if (_note_column_exists('selected_words')) {
+            $stmt = $pdo->prepare("
+                UPDATE verse_notes
+                SET title = ?, note_text = ?, is_public = ?,
+                    gem_std = ?, gem_ord = ?, gem_red = ?, selected_words = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND user_id = ?
+            ");
+            $stmt->execute([
+                $title, $note_text, $is_public,
+                $gem_std, $gem_ord, $gem_red, $selected_words,
+                $note_id, $user['id']
+            ]);
+        } else {
+            $stmt = $pdo->prepare("
+                UPDATE verse_notes
+                SET title = ?, note_text = ?, is_public = ?,
+                    gem_std = ?, gem_ord = ?, gem_red = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND user_id = ?
+            ");
+            $stmt->execute([
+                $title, $note_text, $is_public,
+                $gem_std, $gem_ord, $gem_red,
+                $note_id, $user['id']
+            ]);
+        }
         if ($stmt->rowCount() === 0) {
             $pdo->rollBack();
             set_note_last_error('note not found or you are not the owner');
@@ -749,9 +827,12 @@ function get_user_verse_notes(array $user): array {
     try {
         $pdo = bible_pdo();
         $is_admin = !empty($user['is_admin']);
-        $sql = "
-            SELECT vn.id, vn.user_id, vn.username, vn.title, vn.note_text, vn.is_public,
+         $has_selected_words = _note_column_exists('selected_words');
+         $sel_col = $has_selected_words ? 'vn.selected_words,' : "'' AS selected_words,";
+         $sql = "
+             SELECT vn.id, vn.user_id, vn.username, vn.title, vn.note_text, vn.is_public,
                    vn.book_code, vn.chapter, vn.verse,
+                 {$sel_col}
                    vn.gem_std, vn.gem_ord, vn.gem_red, vn.created_at, vn.updated_at,
                    GROUP_CONCAT(nt.name ORDER BY nt.id SEPARATOR ', ') AS types_label
             FROM verse_notes vn
