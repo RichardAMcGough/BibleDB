@@ -1387,9 +1387,9 @@ function bible_assemble_words(PDO $pdo, int $verse_id,
         return $stmt->fetchAll();
     }
 
-    // NA27/TR: render directly from persisted source-of-truth slot map
+    // NA28/TR: render directly from persisted source-of-truth slot map
     // built from bible_na27/bible_scr (edition_verse_text) alignment.
-    if ($edition_code === 'NA27' || $edition_code === 'TR') {
+    if ($edition_code === 'NA28' || $edition_code === 'TR') {
         $slot_tl_sql = bible_ews_has_transliteration($pdo)
             ? 'ews.transliteration AS slot_transliteration,'
             : "'' AS slot_transliteration,";
@@ -1411,30 +1411,37 @@ function bible_assemble_words(PDO $pdo, int $verse_id,
         $stmt->execute([$edition_id, $verse_id]);
         $rows = $stmt->fetchAll();
 
-        $out = [];
-        foreach ($rows as $r) {
-            $token = (string)($r['token_text'] ?? '');
-            $slotTranslit = trim((string)($r['slot_transliteration'] ?? ''));
-            $slotPos = isset($r['slot_position']) ? (float)$r['slot_position'] : 0.0;
+        // If slot rows are unavailable for this verse/edition (e.g. partial
+        // backfill or pre-slot data), fall back to the canonical edition path
+        // below instead of returning an empty verse.
+        if (!$rows) {
+            // fall through
+        } else {
+            $out = [];
+            foreach ($rows as $r) {
+                $token = (string)($r['token_text'] ?? '');
+                $slotTranslit = trim((string)($r['slot_transliteration'] ?? ''));
+                $slotPos = isset($r['slot_position']) ? (float)$r['slot_position'] : 0.0;
 
-            if (!empty($r['slot_word_id']) && !empty($r['id'])) {
-                $w = $r;
-                if ($token !== '' && (!isset($w['text_original']) || $token !== (string)$w['text_original'])) {
-                    $w['canonical_text_original'] = $w['text_original'] ?? null;
-                    $w['text_original'] = $token;
+                if (!empty($r['slot_word_id']) && !empty($r['id'])) {
+                    $w = $r;
+                    if ($token !== '' && (!isset($w['text_original']) || $token !== (string)$w['text_original'])) {
+                        $w['canonical_text_original'] = $w['text_original'] ?? null;
+                        $w['text_original'] = $token;
+                    }
+                    if ($slotTranslit !== '') {
+                        $w['canonical_transliteration'] = $w['transliteration'] ?? null;
+                        $w['transliteration'] = $slotTranslit;
+                    }
+                    // Keep the slot position for deterministic ordering when inserts surround words.
+                    $w['position'] = $slotPos;
+                    $out[] = $w;
+                } elseif ($token !== '') {
+                    $out[] = bible_slot_token_as_word_row((int)$r['ews_id'], $verse_id, $slotPos, $token, $slotTranslit);
                 }
-                if ($slotTranslit !== '') {
-                    $w['canonical_transliteration'] = $w['transliteration'] ?? null;
-                    $w['transliteration'] = $slotTranslit;
-                }
-                // Keep the slot position for deterministic ordering when inserts surround words.
-                $w['position'] = $slotPos;
-                $out[] = $w;
-            } elseif ($token !== '') {
-                $out[] = bible_slot_token_as_word_row((int)$r['ews_id'], $verse_id, $slotPos, $token, $slotTranslit);
             }
+            return $out;
         }
-        return $out;
     }
 
     $stmt = $pdo->prepare(
@@ -1584,6 +1591,7 @@ function bible_attach_per_word_data(PDO $pdo, array &$words, string $language, ?
     $other_compare_edition_id = $compare_mode ? (($edition_id === $na28_id) ? $tr_id : $na28_id) : null;
     $other_compare_edition_code = ($other_compare_edition_id === $na28_id) ? 'NA28' : (($other_compare_edition_id === $tr_id) ? 'TR' : null);
     $other_positions_by_verse = [];
+    $other_text_by_verse_pos = [];
 
     if (!empty($real_ids)) {
         $marks = implode(',', array_fill(0, count($real_ids), '?'));
@@ -1656,12 +1664,48 @@ function bible_attach_per_word_data(PDO $pdo, array &$words, string $language, ?
                   WHERE w.verse_id = ?
                     AND we.edition_id = ?"
             );
+            $slotTextStmt = $pdo->prepare(
+                "SELECT ews.position, ews.token_text
+                   FROM edition_word_slot ews
+                  WHERE ews.edition_id = ?
+                    AND ews.verse_id = ?
+                    AND ews.token_text <> ''
+                  ORDER BY ews.slot_num"
+            );
+            $wordTextStmt = $pdo->prepare(
+                "SELECT w.position, w.text_original
+                   FROM word w
+                   JOIN word_edition we ON we.word_id = w.id
+                  WHERE w.verse_id = ?
+                    AND we.edition_id = ?
+                  ORDER BY w.position"
+            );
             foreach (array_keys($verse_ids) as $vid) {
                 if ($vid <= 0) continue;
                 $posStmt->execute([$vid, $other_compare_edition_id]);
                 $other_positions_by_verse[$vid] = [];
                 foreach ($posStmt->fetchAll() as $pr) {
                     $other_positions_by_verse[$vid][sprintf('%.2f', (float)$pr['position'])] = true;
+                }
+
+                $other_text_by_verse_pos[$vid] = [];
+                $slotTextStmt->execute([$other_compare_edition_id, $vid]);
+                $slotRows = $slotTextStmt->fetchAll();
+                if (!empty($slotRows)) {
+                    foreach ($slotRows as $sr) {
+                        $pkey = sprintf('%.2f', (float)($sr['position'] ?? 0));
+                        if (!isset($other_text_by_verse_pos[$vid][$pkey])) {
+                            $other_text_by_verse_pos[$vid][$pkey] = (string)($sr['token_text'] ?? '');
+                        }
+                    }
+                } else {
+                    $wordTextStmt->execute([$vid, $other_compare_edition_id]);
+                    foreach ($wordTextStmt->fetchAll() as $wr) {
+                        $pkey = sprintf('%.2f', (float)($wr['position'] ?? 0));
+                        if (!isset($other_text_by_verse_pos[$vid][$pkey])) {
+                            $other_text_by_verse_pos[$vid][$pkey] = (string)($wr['text_original'] ?? '');
+                        }
+                    }
                 }
             }
         }
@@ -1734,10 +1778,41 @@ function bible_attach_per_word_data(PDO $pdo, array &$words, string $language, ?
                 $vlist = array_values($dedup);
             }
 
-            if ($compare_mode && empty($vlist) && $other_compare_edition_code !== null) {
+            if ($compare_mode && $language === 'Greek' && $wpos !== null) {
                 $vid = (int)($w['verse_id'] ?? 0);
+                $other_tok = $other_text_by_verse_pos[$vid][$wpos] ?? null;
+                $cur_tok = (string)($w['text_original'] ?? '');
+                if (is_string($other_tok)
+                    && bible_normalize_greek_variant_text($other_tok) !== ''
+                    && bible_normalize_greek_variant_text($other_tok) === bible_normalize_greek_variant_text($cur_tok)) {
+                    // Same token at same slot across NA28/TR: suppress stale
+                    // lexical variant rows so non-variant words don't show bars.
+                    $vlist = [];
+                }
+            }
+
+            // In NA28/TR compare mode, if the opposite edition has no word at
+            // this exact position, this slot-level difference should behave as
+            // "absent" for toggling. Drop non-omission lexical variants here
+            // to avoid mis-mapping to a neighbor token (e.g. Jhn 8:38 first slot).
+            $slot_absent_in_other = false;
+            if ($compare_mode && $other_compare_edition_code !== null) {
+                $vid = (int)($w['verse_id'] ?? 0);
+                $other_tok = $other_text_by_verse_pos[$vid][$wpos] ?? null;
                 $other_pos_set = $other_positions_by_verse[$vid] ?? null;
-                if (is_array($other_pos_set) && !isset($other_pos_set[$wpos])) {
+                $has_slot_token = is_string($other_tok) && bible_normalize_greek_variant_text($other_tok) !== '';
+                $has_word_pos = is_array($other_pos_set) && isset($other_pos_set[$wpos]);
+                $slot_absent_in_other = !($has_slot_token || $has_word_pos);
+                if ($slot_absent_in_other && !empty($vlist)) {
+                    $vlist = array_values(array_filter($vlist, static function ($v) {
+                        $kind = strtolower(trim((string)($v['kind'] ?? '')));
+                        return $kind === 'omission' || $kind === 'absent';
+                    }));
+                }
+            }
+
+            if ($compare_mode && empty($vlist) && $other_compare_edition_code !== null) {
+                if ($slot_absent_in_other) {
                     // Fallback for cases where NA28/TR differ by presence at
                     // a position but variant rows were not imported.
                     $vlist[] = [
@@ -1760,7 +1835,7 @@ function bible_attach_per_word_data(PDO $pdo, array &$words, string $language, ?
 
             $w['variants'] = $vlist;
 
-            // Slot-based TR/NA27 rendering can already have substituted
+            // Slot-based TR/NA28 rendering can already have substituted
             // text/translit in the base row while source_variant_id is empty.
             // Infer the active variant from current row content so initial
             // render uses the same English/Strong's/grammar that toggle uses.

@@ -258,7 +258,7 @@ require __DIR__ . '/verse_selector.inc.php'; ?>
 
 <div id="options-panel" class="options-panel" hidden>
     <div class="options-title">Display</div>
-    <div class="options-group">
+    <div class="options-group options-group-gematria">
         <span class="options-grouplabel">Gematria</span>
         <label><input type="checkbox" data-opt="gem-std" checked> Standard</label>
         <label><input type="checkbox" data-opt="gem-ord"> Ordinal</label>
@@ -371,7 +371,18 @@ if ($actual_count > 0) {
             <?php foreach ($verses_data as $vd):
                 $v_a    = $vd['verse'];
                 $lang_a = $v_a['language'];
-                $text_a = $lang_a === 'Hebrew' ? clean_inline($v_a['text_original']) : strip_greek_parens($v_a['text_original']);
+                if ($lang_a === 'Hebrew') {
+                    $text_a = clean_inline($v_a['text_original']);
+                } else {
+                    // Build Greek verse text from the edition-filtered word stream
+                    // so NA28/TR switches are reflected in the assembled "Original" line.
+                    $pieces = [];
+                    foreach (($vd['words'] ?? []) as $w_a) {
+                        $tok = trim(strip_greek_parens((string)($w_a['text_original'] ?? '')));
+                        if ($tok !== '') $pieces[] = $tok;
+                    }
+                    $text_a = $pieces ? implode(' ', $pieces) : strip_greek_parens($v_a['text_original']);
+                }
                 $text_a = trim($text_a);
             ?><span class="assembled-verse"><?php if ($actual_count > 1): ?><sup class="vno"><?= (int)$v_a['verse'] === 0 ? 'title' : (int)$v_a['verse'] ?></sup> <?php endif; ?><?= h($text_a) ?></span> <?php endforeach; ?>
         </div>

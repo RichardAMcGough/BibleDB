@@ -101,6 +101,7 @@ GRK_ORDINAL = {
 
 _HEB_NIQQUD      = re.compile(r'[֑-ׇ]')       # vowel points + cantillation
 _SECTION_MARKERS = re.compile(r'\\[פס]')       # Petuhah \פ and Setumah \ס paragraph markers
+_SECTION_TOKENS  = re.compile(r'(?:(?<=\s)|^)[פס](?=\s|$)')  # standalone פ/ס tokens
 _SEPARATORS      = re.compile(r'[/\\]')         # STEPBible morpheme separators
 _GRK_PARENS      = re.compile(r'\s*\([^)]+\)')  # parenthetical romanisation
 # Iota subscript (U+0345, COMBINING GREEK YPOGEGRAMMENI) appears under ᾳ ῃ ῳ.
@@ -114,7 +115,11 @@ def clean_hebrew(text: str) -> str:
     separators, leaving only the bare Hebrew consonants."""
     text = _SECTION_MARKERS.sub('', text)   # must come before _SEPARATORS strip
     text = _HEB_NIQQUD.sub('', text)
+    # Some rows store section markers as standalone tokens (e.g. "׃ ס")
+    # rather than backslash-marked "\ס". Remove both forms consistently.
+    text = _SECTION_TOKENS.sub('', text)
     text = _SEPARATORS.sub('', text)
+    text = _SECTION_TOKENS.sub('', text)
     return text
 
 

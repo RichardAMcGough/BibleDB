@@ -69,6 +69,19 @@
     const typeLabels = { std: 'Standard', ord: 'Ordinal', red: 'Reduced' };
     const dataAttrs  = { std: 'gemStd',   ord: 'gemOrd',  red: 'gemRed'  };
 
+    const HEB_STD = {
+        'א':1,'ב':2,'ג':3,'ד':4,'ה':5,'ו':6,'ז':7,'ח':8,'ט':9,
+        'י':10,'כ':20,'ל':30,'מ':40,'נ':50,'ס':60,'ע':70,'פ':80,'צ':90,
+        'ק':100,'ר':200,'ש':300,'ת':400,
+        'ך':20,'ם':40,'ן':50,'ף':80,'ץ':90
+    };
+    const HEB_ORD = {
+        'א':1,'ב':2,'ג':3,'ד':4,'ה':5,'ו':6,'ז':7,'ח':8,'ט':9,
+        'י':10,'כ':11,'ל':12,'מ':13,'נ':14,'ס':15,'ע':16,'פ':17,'צ':18,
+        'ק':19,'ר':20,'ש':21,'ת':22,
+        'ך':11,'ם':13,'ן':14,'ף':17,'ץ':18
+    };
+
     // ---- letter-counting helpers ----
     // Greek diacritic-strip regex preserves iota subscript (U+0345) so it
     // gets counted as one iota. Hebrew counts only consonants in U+05D0-05EA
@@ -115,9 +128,53 @@
     function sumCells(t, cells) {
         let total = 0;
         cells.forEach(cell => {
-            total += parseInt(cell.dataset[dataAttrs[t]] || 0, 10);
+            const orig = cell.querySelector('.original');
+            const isHeb = !!(orig && orig.classList.contains('heb'));
+            if (isHeb && orig) {
+                total += hebCellValue(orig.textContent || '', t);
+            } else {
+                total += parseInt(cell.dataset[dataAttrs[t]] || 0, 10);
+            }
         });
         return total;
+    }
+
+    function digitalRoot(n) {
+        if (!n) return 0;
+        while (n > 9) {
+            let s = 0;
+            while (n > 0) {
+                s += n % 10;
+                n = Math.floor(n / 10);
+            }
+            n = s;
+        }
+        return n;
+    }
+
+    function cleanHebrewForGematria(text) {
+        if (!text) return '';
+        let t = text;
+        // Remove STEPBible marker form and standalone parashah markers.
+        t = t.replace(/\\[פס]/g, '');
+        t = t.replace(/[֑-ׇ]/g, '');
+        t = t.replace(/[\\/]/g, '');
+        t = t.replace(/(?:(?<=\s)|^)[פס](?=\s|$)/gu, '');
+        return t;
+    }
+
+    function hebScore(text, map) {
+        let s = 0;
+        for (const ch of text) s += map[ch] || 0;
+        return s;
+    }
+
+    function hebCellValue(text, type) {
+        const cleaned = cleanHebrewForGematria(text);
+        if (type === 'std') return hebScore(cleaned, HEB_STD);
+        if (type === 'ord') return hebScore(cleaned, HEB_ORD);
+        if (type === 'red') return digitalRoot(hebScore(cleaned, HEB_STD));
+        return 0;
     }
 
     function rebuild() {
@@ -136,10 +193,7 @@
         if (linkBtn)  linkBtn.style.display  = selectedCells.length > 0 ? '' : 'none';
 
         // Word and letter counts. Letter count comes from PHP-computed
-        // data-letter-count attribute (set in index.php via letter_count()
-        // in helpers.php) so Hebrew section markers \פ and \ס are
-        // correctly excluded -- something JS can't reliably do post-display
-        // because clean_inline() has already stripped the leading backslash.
+        // data-letter-count attribute (set in index.php via letter_count()).
         // Synthetic 'addition' cells (negative ids) fall back to JS counting.
         const realCells = cells.filter(c => !isSectionMarkerCell(c));
         let wordCount = realCells.length;

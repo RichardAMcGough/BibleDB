@@ -6,6 +6,8 @@
     let DATA = {};
     try { DATA = JSON.parse(el.textContent); } catch (e) { return; }
 
+    const GROUP_ATTR = 'data-variant-group';
+
     const FALLBACK_HEB = (typeof VERSE_LANG !== 'undefined' && VERSE_LANG === 'Hebrew');
 
     // ---- Hebrew gematria maps (sofit forms map to base-letter values
@@ -117,7 +119,7 @@
 
         const isHeb = d.lang ? (d.lang === 'Hebrew') : FALLBACK_HEB;
         const lcls  = isHeb ? 'heb' : 'grk';
-        const isAbsent = v && v.kind === 'absent';
+        const isAbsent = v && (v.kind === 'absent' || v.kind === 'omission');
 
         const text     = isAbsent ? '' : (v ? (v.text ?? '') : (d.original ?? ''));
         const translit = isAbsent ? '' : ((v && v.translit) ? v.translit : (d.translit ?? ''));
@@ -150,6 +152,77 @@
 
         if (window._updateGematria) window._updateGematria();
         if (window._gemRebuild)     window._gemRebuild();
+    }
+
+    function preferredGroupVariantIndex(d) {
+        if (!d || !d.variants || !d.variants.length) return 'base';
+        // Prefer a substantive replacement over omission/absent so
+        // phrase toggles switch between readings when possible.
+        for (let i = 0; i < d.variants.length; i++) {
+            const kind = ((d.variants[i] || {}).kind || '').toString().toLowerCase();
+            if (kind !== 'absent' && kind !== 'omission') return i;
+        }
+        // If no lexical replacement exists, fall back to absent/omission.
+        for (let i = 0; i < d.variants.length; i++) {
+            const kind = ((d.variants[i] || {}).kind || '').toString().toLowerCase();
+            if (kind === 'absent' || kind === 'omission') return i;
+        }
+        return 0;
+    }
+
+    function clearVariantGroupMarks() {
+        document.querySelectorAll('.word-cell').forEach(cell => {
+            cell.removeAttribute('data-variant-group');
+            cell.classList.remove('variant-group-start', 'variant-group-mid', 'variant-group-end');
+        });
+    }
+
+    function markVariantRun(run, gid) {
+        if (!run || run.length < 2) return;
+        run.forEach((cell, idx) => {
+            cell.setAttribute(GROUP_ATTR, String(gid));
+            if (idx === 0) cell.classList.add('variant-group-start');
+            else if (idx === run.length - 1) cell.classList.add('variant-group-end');
+            else cell.classList.add('variant-group-mid');
+        });
+    }
+
+    function buildVariantGroups() {
+        clearVariantGroupMarks();
+        let gid = 1;
+        document.querySelectorAll('.verse-block').forEach(block => {
+            const candidates = Array.from(block.querySelectorAll('.word-cell.has-variant')).filter(cell => {
+                const wordId = cell.dataset.wordId;
+                const d = DATA[wordId];
+                return !!(d && d.variants && d.variants.length);
+            });
+            if (!candidates.length) return;
+
+            let run = [candidates[0]];
+            let prevPos = parseInt(candidates[0].dataset.pos || '', 10);
+
+            for (let i = 1; i < candidates.length; i++) {
+                const cell = candidates[i];
+                const pos = parseInt(cell.dataset.pos || '', 10);
+                if (!Number.isNaN(prevPos) && !Number.isNaN(pos) && pos === prevPos + 1) {
+                    run.push(cell);
+                } else {
+                    markVariantRun(run, gid++);
+                    run = [cell];
+                }
+                prevPos = pos;
+            }
+            markVariantRun(run, gid++);
+        });
+    }
+
+    function groupCellsFor(cell) {
+        const gid = cell.getAttribute(GROUP_ATTR);
+        if (!gid) return [cell];
+        const block = cell.closest('.verse-block');
+        if (!block) return [cell];
+        const cells = Array.from(block.querySelectorAll(`.word-cell[${GROUP_ATTR}="${gid}"]`));
+        return cells.length ? cells : [cell];
     }
 
     function normalizeCmp(s) {
@@ -195,6 +268,29 @@
         const wordId = cell.dataset.wordId;
         const d      = DATA[wordId];
         if (!d || !d.variants || !d.variants.length) return;
+
+        const groupedCells = groupCellsFor(cell).filter(c => {
+            const wd = DATA[c.dataset.wordId];
+            return !!(wd && wd.variants && wd.variants.length);
+        });
+        if (groupedCells.length > 1) {
+            const anyNonBase = groupedCells.some(c => (c.dataset.activeVariant ?? 'base') !== 'base');
+            groupedCells.forEach(gc => {
+                const gwid = gc.dataset.wordId;
+                const gd = DATA[gwid];
+                if (!gd || !gd.variants || !gd.variants.length) return;
+                const next = anyNonBase ? 'base' : preferredGroupVariantIndex(gd);
+                applyVariant(gc, gwid, next);
+                const gbtn = gc.querySelector('.variant-btn');
+                if (gbtn) {
+                    const total = gd.variants.length;
+                    gbtn.title = next === 'base'
+                        ? `${total} variant${total > 1 ? 's' : ''} — click to toggle phrase`
+                        : `Phrase variant active — click to return to base`;
+                }
+            });
+            return;
+        }
 
         const current = cell.dataset.activeVariant ?? 'base';
         let next;
@@ -274,6 +370,7 @@
     }
 
     function initVariantStateAndGematria() {
+        buildVariantGroups();
         hydrateActiveVariantsOnLoad();
         syncGematriaOnLoad();
     }
