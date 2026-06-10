@@ -369,11 +369,25 @@ Design rationale, rendering model, and phase plan: **`docs/group-brackets-design
 - Deferred: phase 2 = keep-group-on-one-line layout pass + label collision
   polish; phase 3 = mobile (tap popover, long-press paint). See design doc.
 
-**Uncommitted as of this session** (commit from a native shell, NOT through
-the Cowork mount — mount git status shows phantom modifications from
-mode/EOL): `web/index.php`, `web/style.css`, `web/js/group-brackets.js`,
-`docs/group-brackets-design.md`, `scripts/import/import_bw_bibles.py`,
-`CLAUDE.md` (new, root), this file. Also still untracked from earlier work:
-`include/`, `web/include/`, `scripts/sync-web-to-public.ps1`, `.claude/`,
-`web/contiguous.php`, `mcp/gr_converter.py` — review and either track or
-gitignore. Remember to deploy web changes with sync-web-to-public.ps1.
+**All of the above committed 2026-06-09 evening** (commits `5f8e7a9`,
+`ef7db9f`, `d0d517a`). Remember to deploy web changes with
+sync-web-to-public.ps1.
+
+### Session 2 (2026-06-09 evening)
+
+- **Verse number column** now vertically centers against whatever interlinear
+  rows are visible (was a hardcoded 36px offset).
+- **Group brackets phase 1.5**: adjacent groups share a bracket row (only true
+  overlap bumps; fragments inset 1.5px/end so neighbors never touch);
+  non-contiguous groups get a single connector (risers from first/last/middle
+  fragment centers to a bar through the label midline, label-collision-aware);
+  labels center across the cluster span; word-spacing slider triggers live
+  bracket redraw via `window._bracketsRedraw`. Verified beautifully on Gen 1:1
+  (999/703/1998/2701 all × 37) and John 8:38. Design doc updated.
+- **include/ cleanup**: the legacy biblewheel.com chrome replicas
+  (`include/`, `web/include/`) were deleted from the repo — they contained
+  live DB credentials (wp-config.php) and an outdated nav implementation.
+  Canonical local copy: `public_html/include` (config.php `include_dir` and
+  helpers.php fallbacks now point there; gitignore guards prevent re-adding).
+  The third copy at `Bible Wheel Site/include/include` is now referenced by
+  nothing — archive or delete at leisure.
