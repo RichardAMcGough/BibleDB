@@ -15,7 +15,12 @@
                           // adjacent same-row brackets never touch
     var CONN_DROP = 9.5;  // connector depth: bracket bottom down to the
                           // midline of the 12px label text (no extra rows)
-    var ROW_H     = 28;   // bracket + label row pitch (px)
+    var ROW_H     = 28;   // default bracket + label row pitch (px); live value
+                          // comes from --bracket-row-h ("Group rows" slider)
+    function rowPitch() {
+        var v = parseFloat(getComputedStyle(interlinear).getPropertyValue('--bracket-row-h'));
+        return isNaN(v) ? ROW_H : v;
+    }
     var GAP_TOP   = 5;    // gap between text line bottom and first bracket row
     var BASE_GAP  = 14;   // matches .interlinear row gap in style.css
 
@@ -218,10 +223,10 @@
         if (editing) return;
         var lyr = ensureLayer();
 
-        renderPanelList();
         syncGroupBtn();
 
         if (!groups.length) {
+            renderPanelList(null);
             lyr.innerHTML = '';
             setGap(0);
             return;
@@ -229,6 +234,7 @@
 
         var iRect = interlinear.getBoundingClientRect();
         var rtl   = getComputedStyle(interlinear).direction === 'rtl';
+        var rowH  = rowPitch();
 
         // Cluster ALL cells into visual lines so brackets clear the tallest
         // cell on each line, member or not.
@@ -306,11 +312,15 @@
             }
             return true;
         }
+        // Placement priority: containment depth is structural; within a depth
+        // the user's panel order (groups array order, drag-to-reorder) decides
+        // who gets the higher row when overlapping groups collide.
+        var orderIdx = {};
+        groups.forEach(function (g, i) { orderIdx[g.id] = i; });
         var ordered = groups.slice().sort(function (a, b) {
-            return depthOf(a) - depthOf(b) ||
-                   a.positions.length - b.positions.length || a.id - b.id;
+            return depthOf(a) - depthOf(b) || orderIdx[a.id] - orderIdx[b.id];
         });
-        var drawn = [], maxRows = 0;
+        var drawn = [], maxRows = 0, rowOf = {};
         ordered.forEach(function (g) {
             var frags = fragsFor(g);
             if (!frags.length) return;
@@ -321,12 +331,16 @@
                 (occupied[f.line][row] = occupied[f.line][row] || []).push([f.x1, f.x2]);
             });
             drawn.push({ g: g, frags: frags, row: row });
+            rowOf[g.id] = row;
             maxRows = Math.max(maxRows, row + 1);
         });
 
+        // Panel chips mirror the bracket levels (row asc, then user order).
+        renderPanelList(rowOf);
+
         // Reserve vertical room below every line, then let the resize
         // observer re-render once geometry settles.
-        if (setGap(maxRows ? GAP_TOP + maxRows * ROW_H : 0)) { scheduleRender(); return; }
+        if (setGap(maxRows ? GAP_TOP + maxRows * rowH : 0)) { scheduleRender(); return; }
 
         var theme = themePrimes();
         var html  = '';
@@ -344,7 +358,7 @@
                 var contEnd   = i < d.frags.length - 1 && d.frags[i + 1].lineBreak;
                 var openLeft  = rtl ? contEnd   : contStart;
                 var openRight = rtl ? contStart : contEnd;
-                var yTop = lines[f.line].bottom + GAP_TOP + d.row * ROW_H;
+                var yTop = lines[f.line].bottom + GAP_TOP + d.row * rowH;
                 html += '<div class="bracket-frag' +
                         (openLeft ? ' open-left' : '') + (openRight ? ' open-right' : '') +
                         '" style="left:' + f.x1.toFixed(1) + 'px;top:' + yTop.toFixed(1) +
@@ -357,7 +371,7 @@
             // extra vertical space.
             clusters.forEach(function (cl) {
                 if (cl.length < 2) return;
-                var cTop = lines[cl[0].line].bottom + GAP_TOP + d.row * ROW_H + BRACKET_H;
+                var cTop = lines[cl[0].line].bottom + GAP_TOP + d.row * rowH + BRACKET_H;
                 var Lf = cl[0], Rf = cl[0];
                 cl.forEach(function (f) {
                     if (f.x1 < Lf.x1) Lf = f;
@@ -385,7 +399,7 @@
                 if (x2 - x1 > bestSpan) { bestSpan = x2 - x1; best = { cl: cl, x1: x1, x2: x2 }; }
             });
             var lx = (best.x1 + best.x2) / 2;
-            var ly = lines[best.cl[0].line].bottom + GAP_TOP + d.row * ROW_H + BRACKET_H + 1;
+            var ly = lines[best.cl[0].line].bottom + GAP_TOP + d.row * rowH + BRACKET_H + 1;
             var inner = d.g.label != null ? customLabelHTML(d.g, theme) : defaultLabelHTML(d.g, theme);
             html += '<div class="bracket-label" data-gid="' + d.g.id +
                     '" style="left:' + lx.toFixed(1) + 'px;top:' + ly.toFixed(1) + 'px">' +
@@ -508,20 +522,72 @@
         scheduleRender();
     });
 
-    // panel group list
-    function renderPanelList() {
+    // panel group list — chip order mirrors bracket levels; chips are
+    // draggable left/right to change a group's placement priority.
+    var draggingChip = false;
+    function renderPanelList(rows) {
         var box = document.getElementById('gem-groups');
-        if (!box) return;
+        if (!box || draggingChip) return;
         if (!groups.length) { box.innerHTML = ''; return; }
+        var orderIdx = {};
+        groups.forEach(function (g, i) { orderIdx[g.id] = i; });
+        var sorted = groups.slice().sort(function (a, b) {
+            var ra = rows && rows[a.id] !== undefined ? rows[a.id] : 0;
+            var rb = rows && rows[b.id] !== undefined ? rows[b.id] : 0;
+            return ra - rb || orderIdx[a.id] - orderIdx[b.id];
+        });
         var html = '';
-        groups.forEach(function (g) {
-            html += '<span class="gem-group-row" data-gid="' + g.id + '" title="Click to locate">⊓ ' +
+        sorted.forEach(function (g) {
+            html += '<span class="gem-group-row" draggable="true" data-gid="' + g.id +
+                    '" title="Click to locate · drag to reorder">⊓ ' +
                     groupSum(g, 'gemStd') +
                     ' <span class="gg-n">(' + g.positions.length + 'w)</span>' +
                     '<span class="gg-del" title="Remove group">×</span></span>';
         });
         box.innerHTML = html;
     }
+
+    // drag-to-reorder: live DOM shuffle while dragging; on drop the chip
+    // sequence becomes the new groups order (persisted via ?groups=).
+    (function wireChipDrag() {
+        var box = document.getElementById('gem-groups');
+        if (!box) return;
+        var dragged = null;
+        box.addEventListener('dragstart', function (ev) {
+            var chip = ev.target.closest('.gem-group-row');
+            if (!chip) return;
+            dragged = chip;
+            draggingChip = true;
+            chip.classList.add('dragging');
+            try { ev.dataTransfer.setData('text/plain', chip.dataset.gid); } catch (e) {}
+            ev.dataTransfer.effectAllowed = 'move';
+        });
+        box.addEventListener('dragover', function (ev) {
+            if (!dragged) return;
+            ev.preventDefault();
+            ev.dataTransfer.dropEffect = 'move';
+            var over = ev.target.closest('.gem-group-row');
+            if (!over || over === dragged) return;
+            var r = over.getBoundingClientRect();
+            box.insertBefore(dragged,
+                ev.clientX < r.left + r.width / 2 ? over : over.nextSibling);
+        });
+        box.addEventListener('drop', function (ev) { ev.preventDefault(); });
+        box.addEventListener('dragend', function () {
+            if (!dragged) return;
+            dragged.classList.remove('dragging');
+            dragged = null;
+            draggingChip = false;
+            var idOrder = Array.prototype.map.call(
+                box.querySelectorAll('.gem-group-row'),
+                function (el) { return parseInt(el.dataset.gid, 10); });
+            groups.sort(function (a, b) {
+                return idOrder.indexOf(a.id) - idOrder.indexOf(b.id);
+            });
+            save();
+            scheduleRender();
+        });
+    })();
     document.addEventListener('click', function (ev) {
         var del = ev.target.closest('.gg-del');
         if (del) {

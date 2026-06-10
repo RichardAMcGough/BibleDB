@@ -31,7 +31,7 @@
     const sizeDefaults = {
         'verse-orig-heb': 22, 'verse-orig-grk': 18, 'verse-eng': 16,
         'word-orig-heb': 26, 'word-orig-grk': 18,
-        'word-gap': 14,
+        'word-gap': 14, 'bracket-row': 28,
         translit: 13, 'word-eng': 13, strongs: 12, grammar: 11, gematria: 12,
     };
     const cssVarMap = {
@@ -39,6 +39,7 @@
         'verse-eng':      '--fsz-verse-eng',
         'word-orig-heb':  '--fsz-word-orig-heb',  'word-orig-grk':  '--fsz-word-orig-grk',
         'word-gap':       '--word-cell-gap',
+        'bracket-row':    '--bracket-row-h',
         translit:         '--fsz-translit',        'word-eng':       '--fsz-word-eng',
         strongs:          '--fsz-strongs',         grammar:          '--fsz-grammar',
         gematria:         '--fsz-gematria',

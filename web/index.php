@@ -265,6 +265,7 @@ require __DIR__ . '/verse_selector.inc.php'; ?>
     <div class="options-size-section">
         <span class="options-grouplabel">Font sizes</span>
         <label class="size-ctrl range-ctrl">Word spacing <input type="range" data-size="word-gap" value="14" min="0" max="50" step="1"> <span class="size-value" data-size-value="word-gap">14</span> px</label>
+        <label class="size-ctrl range-ctrl">Group rows <input type="range" data-size="bracket-row" value="28" min="16" max="56" step="1"> <span class="size-value" data-size-value="bracket-row">28</span> px</label>
         <label class="size-ctrl">Verse orig (Heb) <input type="number" data-size="verse-orig-heb" value="22" min="8" max="72" step="1"> px</label>
         <label class="size-ctrl">Verse orig (Grk) <input type="number" data-size="verse-orig-grk" value="18" min="8" max="72" step="1"> px</label>
         <label class="size-ctrl">Verse eng        <input type="number" data-size="verse-eng"       value="16" min="8" max="48" step="1"> px</label>

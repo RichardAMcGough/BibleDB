@@ -27,6 +27,7 @@
     --fsz-grammar:       11px;
     --fsz-gematria:      12px;
     --word-cell-gap:     14px;
+    --bracket-row-h:     28px;   /* gematria group bracket row pitch */
     --bg-alt:    #f3f4f6;
 }
 * { box-sizing: border-box; }
@@ -1569,6 +1570,8 @@ main.bible-main {
     padding: 2px 7px; background: var(--card); cursor: pointer;
 }
 .gem-group-row:hover { background: #f3f4f6; }
+.gem-group-row { cursor: grab; }
+.gem-group-row.dragging { opacity: 0.45; cursor: grabbing; }
 .gem-group-row .gg-n { color: var(--muted); }
 .gem-group-row .gg-del { cursor: pointer; color: var(--muted); padding: 0 1px; }
 .gem-group-row .gg-del:hover { color: #111827; }
