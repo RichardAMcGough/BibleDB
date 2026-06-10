@@ -81,13 +81,14 @@ function bible_external_include_dir(): ?string {
         $candidates[] = rtrim((string)$cfg['include_dir'], "\\/");
     }
 
-    // Common local layouts:
-    // 1) repo-root/include (original assumption)
-    // 2) parent-site/include (current workspace layout)
-    // 3) parent-site/include/include (nested include dir on this host)
+    // Common layouts:
+    // 1) deployed: app lives at <docroot>/bible, includes at <docroot>/include
+    // 2) dev checkout: BibleDB/web with the served copy in sibling public_html
+    // The include dir is never replicated into the repo (it carries live
+    // credentials in wp-config.php); the canonical local copy is
+    // public_html/include.
     $candidates[] = __DIR__ . '/../include';
-    $candidates[] = __DIR__ . '/../../include';
-    $candidates[] = __DIR__ . '/../../include/include';
+    $candidates[] = __DIR__ . '/../../public_html/include';
 
     foreach ($candidates as $dir) {
         if ($dir === '') continue;

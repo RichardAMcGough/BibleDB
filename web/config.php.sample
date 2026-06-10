@@ -26,6 +26,18 @@ return [
     // Keep empty to disable proxy note writes.
     'remote_api_proxy_secret' => '',
 
+    // === Shared site banner/header includes (optional) ===
+    // Filesystem path to the biblewheel.com include directory containing
+    // bwHeader.inc / bwBanner.php. When found, pages render with the full
+    // site chrome instead of the minimal local header/banner.
+    // NEVER copy that directory into this repo — it contains live DB
+    // credentials (wp-config.php). On this workstation the canonical local
+    // copy is the served one:
+    // 'include_dir' => 'c:/Work/Resurrected/Bible Wheel Site/public_html/include',
+    // Leave empty to auto-detect (../include next to the deployed app, or
+    // ../../public_html/include from a dev checkout).
+    'include_dir' => '',
+
     // === Optional phpBB integration for per-user features (notes, etc.) ===
     // Set this to the filesystem path to your phpBB root (with trailing slash).
     // If set and common.php exists, the notes page (and future user features)
