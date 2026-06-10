@@ -197,6 +197,14 @@ for ($i = 0; $i < $count; $i++) {
 $actual_count   = count($verses_data);
 $last_verse_num = $actual_count > 0 ? ($verse + $actual_count - 1) : $verse;
 
+$has_textual_variant_in_range = false;
+foreach ($verses_data as $vd_tv) {
+    if (!empty($vd_tv['verse']['has_significant_variant']) || !empty($vd_tv['verse']['has_any_variant_current_edition'])) {
+        $has_textual_variant_in_range = true;
+        break;
+    }
+}
+
 $prev = $lxx_mode
     ? lxx_neighbor($book_code, $chapter, $verse,          $subverse, 'prev')
     : bible_neighbor($book_code, $chapter, $verse,        'prev');
@@ -231,12 +239,19 @@ ob_start(); ?>
         <option value="<?= $cn ?>" <?= $cn === (int)$count ? 'selected' : '' ?>><?= $cn === 1 ? 'None' : (($cn - 1) === 1 ? '1 vs' : ($cn - 1) . ' vss') ?></option>
     <?php endfor; ?>
     </select>
-    <label class="sel-label">Source</label>
-    <select name="edition" id="sel-edition" title="Edition">
-    <?php foreach ($editions as $ed): ?>
-        <option value="<?= h($ed['code']) ?>" <?= $ed['code'] === $edition_code ? 'selected' : '' ?> title="<?= h($ed['name']) ?>"><?= h($ed['code'] === 'LXX-Rahlfs' ? 'LXX' : $ed['code']) ?></option>
-    <?php endforeach; ?>
-    </select>
+    <span class="source-group">
+        <span class="source-label-stack">
+            <label class="sel-label">Source</label>
+            <?php if ($has_textual_variant_in_range): ?>
+                <span class="source-variant-strip" title="This verse has textual variants" aria-label="This verse has textual variants"></span>
+            <?php endif; ?>
+        </span>
+        <select name="edition" id="sel-edition" title="Edition">
+        <?php foreach ($editions as $ed): ?>
+            <option value="<?= h($ed['code']) ?>" <?= $ed['code'] === $edition_code ? 'selected' : '' ?> title="<?= h($ed['name']) ?>"><?= h($ed['code'] === 'LXX-Rahlfs' ? 'LXX' : $ed['code']) ?></option>
+        <?php endforeach; ?>
+        </select>
+    </span>
 <?php $selector_extra_fields = ob_get_clean();
 require __DIR__ . '/verse_selector.inc.php'; ?>
 </div>
@@ -414,7 +429,9 @@ if ($actual_count > 0) {
         </div>
         <?php foreach ($words as $w): $word_pos++;
             if ($lang === 'Greek') {
-                [$orig_display, $translit] = split_greek_word($w['text_original']);
+                [$orig_display, $paren_translit] = split_greek_word($w['text_original']);
+                $translit = trim((string)($w['transliteration'] ?? $w['canonical_transliteration'] ?? ''));
+                if ($translit === '') $translit = $paren_translit;
                 $english_display = $w['translation'] ?? '';
                 $grammar_display = $w['grammar'] ?? '';
             } else {

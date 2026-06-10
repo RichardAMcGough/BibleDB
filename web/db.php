@@ -1103,6 +1103,65 @@ function bible_edition_id(?string $code): ?int {
     return $cache[$code] ?? null;
 }
 
+function bible_ews_has_transliteration(PDO $pdo): bool {
+    static $cached = null;
+    if ($cached !== null) return $cached;
+    $stmt = $pdo->prepare(
+        "SELECT COUNT(*)
+           FROM information_schema.COLUMNS
+          WHERE TABLE_SCHEMA = DATABASE()
+            AND TABLE_NAME = 'edition_word_slot'
+            AND COLUMN_NAME = 'transliteration'"
+    );
+    $stmt->execute();
+    $cached = ((int)$stmt->fetchColumn()) > 0;
+    return $cached;
+}
+
+// Normalize Greek for variant-equivalence checks:
+// strip combining diacritics except U+0345 (iota subscript), lowercase,
+// and collapse whitespace.
+function bible_normalize_greek_variant_text(?string $text): string {
+    $t = trim((string)($text ?? ''));
+    if ($t === '') return '';
+    if (function_exists('normalizer_normalize')) {
+        $t = normalizer_normalize($t, Normalizer::NFD);
+    }
+    $t = preg_replace('/[\x{0300}-\x{0344}\x{0346}-\x{036F}]/u', '', $t);
+    if (function_exists('normalizer_normalize')) {
+        $t = normalizer_normalize($t, Normalizer::NFC);
+    }
+    $t = mb_strtolower($t);
+    $t = preg_replace('/\s+/u', ' ', $t);
+    return trim((string)$t);
+}
+
+function bible_norm_variant_field(?string $text): string {
+    $t = mb_strtolower(trim((string)($text ?? '')));
+    $t = preg_replace('/\s+/u', ' ', $t);
+    return trim((string)$t);
+}
+
+function bible_variant_dedupe_key(array $v): string {
+    return implode('|', [
+        (string)($v['kind'] ?? ''),
+        bible_normalize_greek_variant_text($v['text_original'] ?? ''),
+        bible_norm_variant_field($v['translation'] ?? ''),
+        bible_norm_variant_field($v['strongs'] ?? ''),
+        bible_norm_variant_field($v['grammar'] ?? ''),
+    ]);
+}
+
+function bible_merge_variant_editions(array $a, array $b): array {
+    $by_code = [];
+    foreach (array_merge($a, $b) as $ed) {
+        $code = (string)($ed['code'] ?? '');
+        if ($code === '') continue;
+        if (!isset($by_code[$code])) $by_code[$code] = $ed;
+    }
+    return array_values($by_code);
+}
+
 // Editions surfaced in the UI dropdown. NA28 / TR are NT critical/Byz texts;
 // LXX-Rahlfs is a *mode switch* — selecting it routes lookups to the LXX
 // tables (book_lxx / verse_lxx / word_lxx) via the lxx_* helpers below.
@@ -1221,6 +1280,83 @@ function bible_verse_full(string $osis_code, int $chapter, int $verse,
     $edition_id = ($vrow['language'] === 'Greek') ? bible_edition_id($edition_code) : null;
     $words = bible_assemble_words($pdo, $verse_id, $edition_id, $edition_code);
 
+    $vrow['has_any_variant_current_edition'] = 0;
+    if ($edition_id !== null) {
+        $na28_id = bible_edition_id('NA28');
+        $tr_id = bible_edition_id('TR');
+        $compare_mode = ($na28_id !== null && $tr_id !== null && ($edition_id === $na28_id || $edition_id === $tr_id));
+        $variant_count = 0;
+        if ($compare_mode) {
+            $stmt = $pdo->prepare(
+                "SELECT COUNT(*)
+                   FROM variant v
+                   JOIN word w ON w.id = v.word_id
+                   JOIN variant_edition ve ON ve.variant_id = v.id
+                  WHERE w.verse_id = ?
+                    AND ve.edition_id IN (?, ?)"
+            );
+            $stmt->execute([$verse_id, $na28_id, $tr_id]);
+            $variant_count = (int)$stmt->fetchColumn();
+        } else {
+            $stmt = $pdo->prepare(
+                "SELECT COUNT(*)
+                   FROM variant v
+                   JOIN word w ON w.id = v.word_id
+                   JOIN variant_edition ve ON ve.variant_id = v.id
+                  WHERE w.verse_id = ?
+                    AND ve.edition_id = ?"
+            );
+            $stmt->execute([$verse_id, $edition_id]);
+            $variant_count = (int)$stmt->fetchColumn();
+        }
+        if ($variant_count > 0) {
+            $vrow['has_any_variant_current_edition'] = 1;
+        } elseif ($compare_mode) {
+            // Fallback: surface NA28/TR position mismatches as verse-level
+            // variants even when variant table rows are absent.
+            $other_id = ($edition_id === $na28_id) ? $tr_id : $na28_id;
+            $stmt = $pdo->prepare(
+                "SELECT COUNT(*)
+                   FROM (
+                     SELECT DISTINCT w.position
+                       FROM word w
+                       JOIN word_edition we ON we.word_id = w.id
+                      WHERE w.verse_id = ? AND we.edition_id = ?
+                   ) a
+                   LEFT JOIN (
+                     SELECT DISTINCT w.position
+                       FROM word w
+                       JOIN word_edition we ON we.word_id = w.id
+                      WHERE w.verse_id = ? AND we.edition_id = ?
+                   ) b ON b.position = a.position
+                  WHERE b.position IS NULL"
+            );
+            $stmt->execute([$verse_id, $edition_id, $verse_id, $other_id]);
+                        $missing_in_other = (int)$stmt->fetchColumn();
+
+                        $stmt = $pdo->prepare(
+                                "SELECT COUNT(*)
+                                     FROM (
+                                         SELECT DISTINCT w.position
+                                             FROM word w
+                                             JOIN word_edition we ON we.word_id = w.id
+                                            WHERE w.verse_id = ? AND we.edition_id = ?
+                                     ) a
+                                     LEFT JOIN (
+                                         SELECT DISTINCT w.position
+                                             FROM word w
+                                             JOIN word_edition we ON we.word_id = w.id
+                                            WHERE w.verse_id = ? AND we.edition_id = ?
+                                     ) b ON b.position = a.position
+                                    WHERE b.position IS NULL"
+                        );
+                        $stmt->execute([$verse_id, $other_id, $verse_id, $edition_id]);
+                        $missing_in_current = (int)$stmt->fetchColumn();
+
+                        $vrow['has_any_variant_current_edition'] = (($missing_in_other + $missing_in_current) > 0) ? 1 : 0;
+        }
+    }
+
     $stmt = $pdo->prepare(
         "SELECT * FROM verse_summary WHERE verse_id = ? ORDER BY block_num"
     );
@@ -1254,12 +1390,16 @@ function bible_assemble_words(PDO $pdo, int $verse_id,
     // NA27/TR: render directly from persisted source-of-truth slot map
     // built from bible_na27/bible_scr (edition_verse_text) alignment.
     if ($edition_code === 'NA27' || $edition_code === 'TR') {
+        $slot_tl_sql = bible_ews_has_transliteration($pdo)
+            ? 'ews.transliteration AS slot_transliteration,'
+            : "'' AS slot_transliteration,";
         $stmt = $pdo->prepare(
             "SELECT ews.id AS ews_id,
                     ews.slot_num,
                     ews.position AS slot_position,
                     ews.word_id AS slot_word_id,
                     ews.token_text,
+                    {$slot_tl_sql}
                     ews.op_type,
                     w.*
                FROM edition_word_slot ews
@@ -1274,6 +1414,7 @@ function bible_assemble_words(PDO $pdo, int $verse_id,
         $out = [];
         foreach ($rows as $r) {
             $token = (string)($r['token_text'] ?? '');
+            $slotTranslit = trim((string)($r['slot_transliteration'] ?? ''));
             $slotPos = isset($r['slot_position']) ? (float)$r['slot_position'] : 0.0;
 
             if (!empty($r['slot_word_id']) && !empty($r['id'])) {
@@ -1282,11 +1423,15 @@ function bible_assemble_words(PDO $pdo, int $verse_id,
                     $w['canonical_text_original'] = $w['text_original'] ?? null;
                     $w['text_original'] = $token;
                 }
+                if ($slotTranslit !== '') {
+                    $w['canonical_transliteration'] = $w['transliteration'] ?? null;
+                    $w['transliteration'] = $slotTranslit;
+                }
                 // Keep the slot position for deterministic ordering when inserts surround words.
                 $w['position'] = $slotPos;
                 $out[] = $w;
             } elseif ($token !== '') {
-                $out[] = bible_slot_token_as_word_row((int)$r['ews_id'], $verse_id, $slotPos, $token);
+                $out[] = bible_slot_token_as_word_row((int)$r['ews_id'], $verse_id, $slotPos, $token, $slotTranslit);
             }
         }
         return $out;
@@ -1391,7 +1536,7 @@ function bible_variant_as_word_row(array $v, int $verse_id, ?string $edition_cod
     ];
 }
 
-function bible_slot_token_as_word_row(int $slot_id, int $verse_id, float $position, string $token): array {
+function bible_slot_token_as_word_row(int $slot_id, int $verse_id, float $position, string $token, string $transliteration = ''): array {
     return [
         'id'                => -((int)$slot_id),
         'verse_id'          => $verse_id,
@@ -1405,7 +1550,7 @@ function bible_slot_token_as_word_row(int $slot_id, int $verse_id, float $positi
         'is_variant_marked' => 1,
         'language'          => 'Greek',
         'text_original'     => $token,
-        'transliteration'   => '',
+        'transliteration'   => $transliteration,
         'translation'       => '',
         'strongs'           => '',
         'strongs_primary'   => '',
@@ -1432,6 +1577,13 @@ function bible_attach_per_word_data(PDO $pdo, array &$words, string $language, ?
     }
 
     $eds = $alts = $morphs = $links = $vars = $gem = [];
+
+    $na28_id = bible_edition_id('NA28');
+    $tr_id = bible_edition_id('TR');
+    $compare_mode = ($edition_id !== null && $na28_id !== null && $tr_id !== null && ($edition_id === $na28_id || $edition_id === $tr_id));
+    $other_compare_edition_id = $compare_mode ? (($edition_id === $na28_id) ? $tr_id : $na28_id) : null;
+    $other_compare_edition_code = ($other_compare_edition_id === $na28_id) ? 'NA28' : (($other_compare_edition_id === $tr_id) ? 'TR' : null);
+    $other_positions_by_verse = [];
 
     if (!empty($real_ids)) {
         $marks = implode(',', array_fill(0, count($real_ids), '?'));
@@ -1461,14 +1613,26 @@ function bible_attach_per_word_data(PDO $pdo, array &$words, string $language, ?
         foreach ($stmt->fetchAll() as $r) $links[(int)$r['word_id']][] = $r;
 
                 if ($edition_id !== null) {
+                    if ($compare_mode) {
                         $stmt = $pdo->prepare("SELECT DISTINCT v.* FROM variant v
-                                                                        JOIN variant_edition ve ON ve.variant_id = v.id
-                                                                     WHERE v.word_id IN ($marks)
-                                                                         AND ve.edition_id = ?
-                                                                     ORDER BY v.word_id, v.position, v.id");
+                                                JOIN variant_edition ve ON ve.variant_id = v.id
+                                                 WHERE v.word_id IN ($marks)
+                                                 AND ve.edition_id IN (?, ?)
+                                                 ORDER BY v.word_id, v.position, v.id");
+                        $params = $real_ids;
+                        $params[] = $na28_id;
+                        $params[] = $tr_id;
+                        $stmt->execute($params);
+                    } else {
+                        $stmt = $pdo->prepare("SELECT DISTINCT v.* FROM variant v
+                                                JOIN variant_edition ve ON ve.variant_id = v.id
+                                                 WHERE v.word_id IN ($marks)
+                                                 AND ve.edition_id = ?
+                                                 ORDER BY v.word_id, v.position, v.id");
                         $params = $real_ids;
                         $params[] = $edition_id;
                         $stmt->execute($params);
+                    }
                 } else {
                         $stmt = $pdo->prepare("SELECT DISTINCT v.* FROM variant v
                                                                         JOIN variant_edition ve ON ve.variant_id = v.id
@@ -1478,6 +1642,29 @@ function bible_attach_per_word_data(PDO $pdo, array &$words, string $language, ?
                         $stmt->execute($real_ids);
                 }
         foreach ($stmt->fetchAll() as $r) $vars[(int)$r['word_id']][] = $r + ['editions' => []];
+
+        if ($compare_mode && $other_compare_edition_id !== null) {
+            $verse_ids = [];
+            foreach ($words as $w) {
+                $wid = (int)($w['id'] ?? 0);
+                if ($wid > 0) $verse_ids[(int)($w['verse_id'] ?? 0)] = true;
+            }
+            $posStmt = $pdo->prepare(
+                "SELECT DISTINCT w.position
+                   FROM word w
+                   JOIN word_edition we ON we.word_id = w.id
+                  WHERE w.verse_id = ?
+                    AND we.edition_id = ?"
+            );
+            foreach (array_keys($verse_ids) as $vid) {
+                if ($vid <= 0) continue;
+                $posStmt->execute([$vid, $other_compare_edition_id]);
+                $other_positions_by_verse[$vid] = [];
+                foreach ($posStmt->fetchAll() as $pr) {
+                    $other_positions_by_verse[$vid][sprintf('%.2f', (float)$pr['position'])] = true;
+                }
+            }
+        }
 
         $vids = [];
         foreach ($vars as $vlist) foreach ($vlist as $v) $vids[] = (int)$v['id'];
@@ -1523,7 +1710,107 @@ function bible_attach_per_word_data(PDO $pdo, array &$words, string $language, ?
                     return sprintf('%.2f', (float)($v['position'] ?? 0)) === $wpos;
                 }));
             }
+
+            // In NA28/TR compare mode we intentionally load both editions' variant
+            // rows. Collapse purely diacritic Greek duplicates (e.g. same letters,
+            // different accents) so users don't cycle through no-op visual changes.
+            // Iota subscript (U+0345) is preserved by the normalizer above.
+            if ($language === 'Greek' && !empty($vlist)) {
+                $dedup = [];
+                foreach ($vlist as $v) {
+                    $key = bible_variant_dedupe_key($v);
+                    if (!isset($dedup[$key])) {
+                        $dedup[$key] = $v;
+                    } else {
+                        $dedup[$key]['editions'] = bible_merge_variant_editions(
+                            $dedup[$key]['editions'] ?? [],
+                            $v['editions'] ?? []
+                        );
+                        if (empty($dedup[$key]['note']) && !empty($v['note'])) {
+                            $dedup[$key]['note'] = $v['note'];
+                        }
+                    }
+                }
+                $vlist = array_values($dedup);
+            }
+
+            if ($compare_mode && empty($vlist) && $other_compare_edition_code !== null) {
+                $vid = (int)($w['verse_id'] ?? 0);
+                $other_pos_set = $other_positions_by_verse[$vid] ?? null;
+                if (is_array($other_pos_set) && !isset($other_pos_set[$wpos])) {
+                    // Fallback for cases where NA28/TR differ by presence at
+                    // a position but variant rows were not imported.
+                    $vlist[] = [
+                        'id' => 0,
+                        'word_id' => $wid,
+                        'position' => (float)($w['position'] ?? 0),
+                        'kind' => 'absent',
+                        'text_original' => '',
+                        'transliteration' => '',
+                        'translation' => '',
+                        'strongs' => '',
+                        'grammar' => '',
+                        'note' => 'Absent in ' . $other_compare_edition_code,
+                        'editions' => [
+                            ['code' => $other_compare_edition_code, 'name' => $other_compare_edition_code, 'is_minor' => 0],
+                        ],
+                    ];
+                }
+            }
+
             $w['variants'] = $vlist;
+
+            // Slot-based TR/NA27 rendering can already have substituted
+            // text/translit in the base row while source_variant_id is empty.
+            // Infer the active variant from current row content so initial
+            // render uses the same English/Strong's/grammar that toggle uses.
+            $has_substituted_row =
+                ((!empty($w['canonical_text_original']) && (string)$w['canonical_text_original'] !== (string)($w['text_original'] ?? ''))
+                 || (!empty($w['canonical_transliteration']) && (string)$w['canonical_transliteration'] !== (string)($w['transliteration'] ?? '')));
+            if ($has_substituted_row && empty($w['source_variant_id']) && !empty($vlist)) {
+                $cur_text = trim((string)($w['text_original'] ?? ''));
+                $cur_tlit = trim((string)($w['transliteration'] ?? ''));
+                $chosen = null;
+
+                foreach ($vlist as $vt) {
+                    if (trim((string)($vt['text_original'] ?? '')) !== ''
+                        && $cur_text !== ''
+                        && trim((string)$vt['text_original']) === $cur_text) {
+                        $chosen = $vt;
+                        break;
+                    }
+                }
+
+                if ($chosen === null && $cur_tlit !== '') {
+                    foreach ($vlist as $vt) {
+                        if (trim((string)($vt['transliteration'] ?? '')) !== ''
+                            && trim((string)$vt['transliteration']) === $cur_tlit) {
+                            $chosen = $vt;
+                            break;
+                        }
+                    }
+                }
+
+                if ($chosen !== null) {
+                    if (!array_key_exists('canonical_translation', $w) || $w['canonical_translation'] === null || $w['canonical_translation'] === '') {
+                        $w['canonical_translation'] = $w['translation'] ?? null;
+                    }
+                    if (!array_key_exists('canonical_strongs', $w) || $w['canonical_strongs'] === null || $w['canonical_strongs'] === '') {
+                        $w['canonical_strongs'] = $w['strongs'] ?? null;
+                    }
+                    if (!array_key_exists('canonical_grammar', $w) || $w['canonical_grammar'] === null || $w['canonical_grammar'] === '') {
+                        $w['canonical_grammar'] = $w['grammar'] ?? null;
+                    }
+                    if (!array_key_exists('canonical_transliteration', $w) || $w['canonical_transliteration'] === null || $w['canonical_transliteration'] === '') {
+                        $w['canonical_transliteration'] = $w['transliteration'] ?? null;
+                    }
+                    $w['source_variant_id'] = (int)($chosen['id'] ?? 0);
+                    if (!empty($chosen['translation']))     $w['translation'] = $chosen['translation'];
+                    if (!empty($chosen['strongs']))         $w['strongs']     = $chosen['strongs'];
+                    if (!empty($chosen['grammar']))         $w['grammar']     = $chosen['grammar'];
+                    if (!empty($chosen['transliteration'])) $w['transliteration'] = $chosen['transliteration'];
+                }
+            }
         } else {
             $w['variants'] = [];
         }

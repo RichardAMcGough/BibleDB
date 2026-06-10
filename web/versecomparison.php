@@ -319,7 +319,9 @@ $all_raws = array_column($entries, 'raw');
     <div class="verse-num"><?= $e['verse'] ?></div>
     <?php $word_pos = 0; foreach ($words as $w): $word_pos++;
         if ($lang === 'Greek') {
-            [$orig_display, $translit] = split_greek_word($w['text_original']);
+            [$orig_display, $paren_translit] = split_greek_word($w['text_original']);
+            $translit = trim((string)($w['transliteration'] ?? $w['canonical_transliteration'] ?? ''));
+            if ($translit === '') $translit = $paren_translit;
             $english_display = $w['translation'] ?? '';
             $grammar_display = $w['grammar'] ?? '';
         } else {

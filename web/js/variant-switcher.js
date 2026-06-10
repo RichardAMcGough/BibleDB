@@ -152,6 +152,38 @@
         if (window._gemRebuild)     window._gemRebuild();
     }
 
+    function normalizeCmp(s) {
+        return (s || '').toString().trim().toLowerCase().replace(/\s+/g, ' ');
+    }
+
+    function inferInitialVariantIndex(cell, d) {
+        if (!d || !d.variants || !d.variants.length) return 'base';
+
+        const origEl = cell.querySelector('.original');
+        const trEl = cell.querySelector('.translit');
+        const shownOrig = normalizeCmp(origEl ? origEl.textContent : '');
+        const shownTranslit = normalizeCmp(trEl ? trEl.textContent : '');
+
+        // If DOM already matches base payload, keep base.
+        const baseOrig = normalizeCmp(d.original || '');
+        const baseTranslit = normalizeCmp(d.translit || '');
+        if (shownOrig === baseOrig && (shownTranslit === '' || shownTranslit === baseTranslit)) {
+            return 'base';
+        }
+
+        for (let i = 0; i < d.variants.length; i++) {
+            const v = d.variants[i] || {};
+            const vOrig = normalizeCmp(v.text || '');
+            const vTranslit = normalizeCmp(v.translit || '');
+
+            // Prefer text match; translit match is fallback when text differs by normalization.
+            if (vOrig && shownOrig && vOrig === shownOrig) return i;
+            if (vTranslit && shownTranslit && vTranslit === shownTranslit) return i;
+        }
+
+        return 'base';
+    }
+
     // Click cycles: base → v[0] → v[1] → ... → base
     document.addEventListener('click', function (ev) {
         const btn = ev.target.closest('.variant-btn');
@@ -195,6 +227,34 @@
     // Setumah \ס section markers, but the displayed text has the
     // backslash removed by clean_inline() in helpers.php, so recomputing
     // in JS would wrongly count פ=80 and ס=60 for those section markers.
+    function hydrateActiveVariantsOnLoad() {
+        document.querySelectorAll('.word-cell').forEach(cell => {
+            const wordId = cell.dataset.wordId;
+            const d = DATA[wordId];
+            if (!d || !d.variants || !d.variants.length) return;
+
+            let active = cell.dataset.activeVariant;
+            if (active === undefined || active === null || active === '') {
+                active = 'base';
+            }
+
+            // Some server paths pre-render variant text but mark the cell as base.
+            // Infer the correct variant from what is already displayed so first paint
+            // and toggle cycle stay in sync.
+            if (active === 'base') {
+                const inferred = inferInitialVariantIndex(cell, d);
+                if (inferred !== 'base') {
+                    applyVariant(cell, wordId, inferred);
+                }
+                return;
+            }
+
+            const idx = parseInt(active, 10);
+            if (Number.isNaN(idx) || idx < 0 || idx >= d.variants.length) return;
+            applyVariant(cell, wordId, idx);
+        });
+    }
+
     function syncGematriaOnLoad() {
         document.querySelectorAll('.word-cell').forEach(cell => {
             const wordId = cell.dataset.wordId;
@@ -213,9 +273,14 @@
         if (window._gemRebuild)     window._gemRebuild();
     }
 
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', syncGematriaOnLoad);
-    } else {
+    function initVariantStateAndGematria() {
+        hydrateActiveVariantsOnLoad();
         syncGematriaOnLoad();
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initVariantStateAndGematria);
+    } else {
+        initVariantStateAndGematria();
     }
 })();

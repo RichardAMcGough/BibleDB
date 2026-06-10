@@ -51,7 +51,10 @@ function build_render_context(array $verses_data,
 
             $word_grammar  = $is_heb ? format_hebrew_grammar($payload_grammar, $w['morphemes']) : $payload_grammar;
             $word_orig     = $is_heb ? clean_inline($payload_text_original)   : strip_greek_parens($payload_text_original);
-            $word_translit = $is_heb ? clean_inline($payload_transliteration) : (split_greek_word($payload_text_original)[1] ?? '');
+            $word_translit = $is_heb ? clean_inline($payload_transliteration) : trim((string)$payload_transliteration);
+            if (!$is_heb && $word_translit === '') {
+                $word_translit = (split_greek_word($payload_text_original)[1] ?? '');
+            }
             $word_english  = $is_heb ? clean_inline($payload_translation)     : $payload_translation;
 
             $detail_payload[(int)$w['id']] = [
