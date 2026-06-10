@@ -1,5 +1,16 @@
 // options.js — display options panel (gear button) and font-size controls.
 (function () {
+    let didInit = false;
+
+    function initOptions() {
+    if (didInit) return;
+    const panel = document.getElementById('options-panel');
+    if (!panel) {
+        setTimeout(initOptions, 50);
+        return;
+    }
+    didInit = true;
+
     const KEY       = 'bible-display-opts';
     const SIZE_KEY  = 'bible-display-sizes';
     const COLOR_KEY = 'bible-display-colors';
@@ -20,12 +31,14 @@
     const sizeDefaults = {
         'verse-orig-heb': 22, 'verse-orig-grk': 18, 'verse-eng': 16,
         'word-orig-heb': 26, 'word-orig-grk': 18,
+        'word-gap': 14,
         translit: 13, 'word-eng': 13, strongs: 12, grammar: 11, gematria: 12,
     };
     const cssVarMap = {
         'verse-orig-heb': '--fsz-verse-orig-heb', 'verse-orig-grk': '--fsz-verse-orig-grk',
         'verse-eng':      '--fsz-verse-eng',
         'word-orig-heb':  '--fsz-word-orig-heb',  'word-orig-grk':  '--fsz-word-orig-grk',
+        'word-gap':       '--word-cell-gap',
         translit:         '--fsz-translit',        'word-eng':       '--fsz-word-eng',
         strongs:          '--fsz-strongs',         grammar:          '--fsz-grammar',
         gematria:         '--fsz-gematria',
@@ -45,10 +58,9 @@
     } catch (e) { /* ignore */ }
 
     const interlinear = document.getElementById('interlinear');
-    const panel       = document.getElementById('options-panel');
     const btn         = document.getElementById('gear-btn');
     const boxes       = panel ? panel.querySelectorAll('input[type=checkbox][data-opt]') : [];
-    const sizeInputs  = panel ? panel.querySelectorAll('input[type=number][data-size]') : [];
+    const sizeInputs  = panel ? panel.querySelectorAll('input[data-size]') : [];
     const colorInputs = panel ? panel.querySelectorAll('input[type=color][data-color]') : [];
 
     // Rebuild gematria text in every word cell based on current options.
@@ -120,34 +132,75 @@
         }
     }
 
+    function updateSizeValueLabel(sizeKey, val) {
+        if (!panel) return;
+        panel.querySelectorAll(`[data-size-value="${sizeKey}"]`).forEach((el) => {
+            el.textContent = String(val);
+        });
+    }
+
     function applyColors() {
         for (const [key, varName] of Object.entries(colorVarMap)) {
             document.documentElement.style.setProperty(varName, colors[key]);
         }
     }
 
-    // Wire up gear button FIRST so it works even if applyAll() below throws.
-    if (btn && panel) {
-        btn.addEventListener('click', (ev) => {
-            ev.stopPropagation();
-            const open = panel.hasAttribute('hidden');
-            if (open) {
-                panel.removeAttribute('hidden');
-                btn.setAttribute('aria-expanded', 'true');
-                btn.classList.add('active');
-            } else {
-                panel.setAttribute('hidden', '');
-                btn.setAttribute('aria-expanded', 'false');
-                btn.classList.remove('active');
-            }
+    function getTriggers() {
+        return [btn, document.getElementById('sidebar-options-link')].filter(Boolean);
+    }
+
+    function closeSidebarDrawer() {
+        const sidebar = document.getElementById('bible-sidebar');
+        const backdrop = document.getElementById('bible-sidebar-backdrop');
+        const toggle = document.getElementById('sidebar-toggle');
+        if (sidebar) sidebar.classList.remove('open');
+        if (backdrop) backdrop.classList.remove('visible');
+        if (toggle) toggle.setAttribute('aria-expanded', 'false');
+    }
+
+    function setTriggersExpanded(expanded) {
+        getTriggers().forEach((el) => {
+            el.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+            if (el.classList) el.classList.toggle('active', !!expanded);
         });
+    }
+
+    function openPanel() {
+        if (!panel) return;
+        panel.removeAttribute('hidden');
+        setTriggersExpanded(true);
+    }
+
+    function closePanel() {
+        if (!panel) return;
+        panel.setAttribute('hidden', '');
+        setTriggersExpanded(false);
+    }
+
+    // Wire up display-options triggers FIRST so they work even if applyAll() below throws.
+    if (panel) {
+        window.__optionsTriggerBound = true;
+        getTriggers().forEach((el) => {
+            el.addEventListener('click', (ev) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                if (el.id === 'sidebar-options-link') closeSidebarDrawer();
+                if (panel.hasAttribute('hidden')) openPanel();
+                else closePanel();
+            });
+        });
+
         document.addEventListener('click', (ev) => {
             if (panel.hasAttribute('hidden')) return;
             if (panel.contains(ev.target)) return;
-            panel.setAttribute('hidden', '');
-            btn.setAttribute('aria-expanded', 'false');
-            btn.classList.remove('active');
+            if (getTriggers().some((el) => el.contains(ev.target))) return;
+            closePanel();
         });
+
+        try {
+            const q = new URLSearchParams(window.location.search);
+            if (q.get('open_options') === '1') openPanel();
+        } catch (e) { /* ignore */ }
     }
 
     boxes.forEach(box => {
@@ -162,15 +215,21 @@
     sizeInputs.forEach(inp => {
         const key = inp.dataset.size;
         inp.value = sizes[key] ?? inp.value;
-        inp.addEventListener('change', () => {
+        updateSizeValueLabel(key, inp.value);
+        const onSizeInput = () => {
             const min = parseInt(inp.min, 10);
             const max = parseInt(inp.max, 10);
-            const val = Math.max(min, Math.min(max, parseInt(inp.value, 10) || sizeDefaults[key]));
+            const parsed = parseInt(inp.value, 10);
+            const baseVal = Number.isNaN(parsed) ? sizeDefaults[key] : parsed;
+            const val = Math.max(min, Math.min(max, baseVal));
             inp.value = val;
             sizes[key] = val;
+            updateSizeValueLabel(key, val);
             try { localStorage.setItem(SIZE_KEY, JSON.stringify(sizes)); } catch (e) {}
             applySizes();
-        });
+        };
+        inp.addEventListener('input', onSizeInput);
+        inp.addEventListener('change', onSizeInput);
     });
 
     colorInputs.forEach(inp => {
@@ -198,7 +257,11 @@
             // Sync checkboxes
             boxes.forEach(box => { box.checked = !!opts[box.dataset.opt]; });
             // Sync size inputs
-            sizeInputs.forEach(inp => { inp.value = sizes[inp.dataset.size] ?? inp.value; });
+            sizeInputs.forEach(inp => {
+                const key = inp.dataset.size;
+                inp.value = sizes[key] ?? inp.value;
+                updateSizeValueLabel(key, inp.value);
+            });
             // Sync color inputs
             colorInputs.forEach(inp => { inp.value = colors[inp.dataset.color] ?? inp.value; });
             applyAll();
@@ -210,4 +273,10 @@
     try { applyAll();    } catch (e) { console.error('applyAll error:', e); }
     try { applySizes();  } catch (e) { console.error('applySizes error:', e); }
     try { applyColors(); } catch (e) { console.error('applyColors error:', e); }
+
+    }
+
+    initOptions();
+    document.addEventListener('DOMContentLoaded', initOptions, { once: true });
+    window.addEventListener('load', initOptions, { once: true });
 })();

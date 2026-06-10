@@ -55,17 +55,30 @@
         return '';
     }
 
+    function syncInputDirection() {
+        const script = detectScript(searchInput.value.trim());
+        searchInput.setAttribute('dir', script === 'Hebrew' ? 'rtl' : 'ltr');
+    }
+
     // Decide mode + lang from whatever is currently in the box.
     // Sets isStrongs and detectedLang; syncs UI via helpers.
     function updateDetected() {
         const v = searchInput.value.trim();
-        if (!v) { detectedLang = ''; isStrongs = false; isGematria = false; syncPhraseLabel(); return; }
+        if (!v) {
+            detectedLang = '';
+            isStrongs = false;
+            isGematria = false;
+            syncPhraseLabel();
+            syncInputDirection();
+            return;
+        }
 
         // Strong's code: one or more H/G codes, comma-separated (e.g. "H430" or "H430, G3056").
         if (/^[HG]\d{1,5}[A-Za-z]?(,\s*[HG]\d{1,5}[A-Za-z]?)*$/i.test(v)) {
             isStrongs = true; isGematria = false;
             detectedLang = '';
             syncPhraseLabel();
+            syncInputDirection();
             return;
         }
 
@@ -74,6 +87,7 @@
             isGematria = true; isStrongs = false;
             detectedLang = '';
             syncPhraseLabel();
+            syncInputDirection();
             return;
         }
 
@@ -81,12 +95,29 @@
         const script = detectScript(v);
         if (script) detectedLang = script;
         syncPhraseLabel();
+        syncInputDirection();
     }
 
     // Return the active search mode for doSearch().
     function getMode() {
         if (isStrongs) return 'strongs';
         return (phraseCheck && phraseCheck.checked) ? 'phrase' : 'text';
+    }
+
+    function placeCaretAtEnd(el) {
+        if (!el) return;
+        const n = el.value.length;
+        try { el.setSelectionRange(n, n); } catch (e) {}
+    }
+
+    function insertAtCaret(el, text) {
+        if (!el) return;
+        const val = el.value || '';
+        const start = (typeof el.selectionStart === 'number') ? el.selectionStart : val.length;
+        const end = (typeof el.selectionEnd === 'number') ? el.selectionEnd : start;
+        el.value = val.slice(0, start) + text + val.slice(end);
+        const pos = start + text.length;
+        try { el.setSelectionRange(pos, pos); } catch (e) {}
     }
 
     searchInput.addEventListener('input', function () { updateDetected(); syncClearBtn(); });
@@ -186,39 +217,45 @@
 
     // ── Phrase selection: assembled ORIGINAL (Hebrew / Greek) ─────────────────
 
-    const assembledOrig = document.querySelector('.assembled .original');
-    if (assembledOrig) {
-        assembledOrig.addEventListener('mouseup', function () {
-            const text = expandSelectionToWords(assembledOrig);
+    function bindSelectionCapture(containerEl, onCaptured) {
+        if (!containerEl) return;
+
+        const captureNow = function () {
+            const text = expandSelectionToWords(containerEl);
             if (!text) return;
-            if (phraseCheck) phraseCheck.checked = true;
-            searchInput.value = text;
-            updateDetected();
-            syncClearBtn();
-            searchInput.select();
-        });
+            onCaptured(text);
+        };
+
+        // Desktop mouse selection.
+        containerEl.addEventListener('mouseup', captureNow);
+
+        // Touch/pointer selection: defer one tick so mobile browsers finalize
+        // selection handles before we read window.getSelection().
+        const captureDeferred = function () { setTimeout(captureNow, 0); };
+        containerEl.addEventListener('touchend', captureDeferred, { passive: true });
+        containerEl.addEventListener('pointerup', captureDeferred);
     }
+
+    const assembledOrig = document.querySelector('.assembled .original');
+    bindSelectionCapture(assembledOrig, function (text) {
+        if (phraseCheck) phraseCheck.checked = true;
+        searchInput.value = text;
+        updateDetected();
+        syncClearBtn();
+    });
 
     // ── Phrase selection: assembled ENGLISH (KJV) ─────────────────────────────
     // Expand the highlight to whole words, populate the box, and set the
     // phrase checkbox so it routes to bible_kjv as an exact phrase.
     const assembledEng = document.querySelector('.assembled .english');
-    if (assembledEng) {
-        assembledEng.addEventListener('mouseup', function () {
-            // Defer so the browser finalises the selection first.
-            setTimeout(function () {
-                const phrase = expandSelectionToWords(assembledEng);
-                if (!phrase) return;
-                if (phraseCheck) phraseCheck.checked = true;
-                searchInput.value = phrase;
-                detectedLang      = 'English';
-                syncClearBtn();
-                syncPhraseLabel();
-                searchInput.focus();
-                searchInput.select();
-            }, 0);
-        });
-    }
+    bindSelectionCapture(assembledEng, function (phrase) {
+        if (phraseCheck) phraseCheck.checked = true;
+        searchInput.value = phrase;
+        detectedLang      = 'English';
+        syncClearBtn();
+        syncPhraseLabel();
+        searchInput.focus();
+    });
 
     // ── Verse-reference detection ──────────────────────────────────────────────
     // Recognised book-name keys (lowercase, no spaces) — mirrors PHP BOOK_ALIASES.
@@ -314,6 +351,19 @@
         });
     }
     searchInput.addEventListener('keydown', function (ev) {
+        // RTL convenience: insert '*' at the actual caret/selection location
+        // for Hebrew text so wildcard editing is predictable.
+        if (
+            ev.key === '*'
+            && !ev.ctrlKey && !ev.altKey && !ev.metaKey
+            && detectScript(searchInput.value) === 'Hebrew'
+        ) {
+            ev.preventDefault();
+            insertAtCaret(searchInput, '*');
+            updateDetected();
+            syncClearBtn();
+            return;
+        }
         if (ev.key === 'Enter') doSearch();
     });
 

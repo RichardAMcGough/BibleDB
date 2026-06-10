@@ -106,7 +106,7 @@ if ($mode === 'gematria') {
 <?php if (empty($groups)): ?>
     <div class="verse-card empty">No words found with standard gematria = <?= (int)$gem_value ?>.</div>
 <?php else: ?>
-<table class="search-table">
+<table class="search-table search-table-gematria">
 <thead>
     <tr>
         <th>Word</th>
@@ -176,7 +176,7 @@ if ($mode === 'gematria') {
 
 <?php if (!empty($public_notes)): ?>
 <div class="search-testament">Matching Notes</div>
-<table class="search-table">
+<table class="search-table search-table-gematria-notes">
 <thead>
     <tr>
         <th>Verse</th>
@@ -214,10 +214,10 @@ if ($mode === 'gematria') {
     }
 ?>
     <tr>
-        <td class="search-book"><a href="<?= h($n_url) ?>" class="verse-ref" data-book="<?= h($n_code) ?>" data-chapter="<?= $n_ch ?>" data-verse="<?= $n_vs ?>"><?= $n_ref ?></a></td>
-        <td class="gem-word-cell"><strong><a href="<?= h($n_title_url) ?>"><?= h(($n['title'] ?? '') !== '' ? $n['title'] : '(untitled)') ?></a></strong><?= $is_private ? ' <span class="note-private-badge" title="Private note">&#x1F512;</span>' : '' ?><br><span class="gem-eng">by <?= h($n['username'] ?? 'Unknown') ?></span></td>
-        <td class="gem-count-col"><?= !empty($g_bits) ? implode('<br>', $g_bits) : '&mdash;' ?></td>
-        <td class="search-verses"><?= bbcode_to_html($n['note_text'] ?? '') ?></td>
+        <td class="search-book" data-label="Verse"><a href="<?= h($n_url) ?>" class="verse-ref" data-book="<?= h($n_code) ?>" data-chapter="<?= $n_ch ?>" data-verse="<?= $n_vs ?>"><?= $n_ref ?></a></td>
+        <td class="gem-word-cell" data-label="Title"><strong><a href="<?= h($n_title_url) ?>"><?= h(($n['title'] ?? '') !== '' ? $n['title'] : '(untitled)') ?></a></strong><?= $is_private ? ' <span class="note-private-badge" title="Private note">&#x1F512;</span>' : '' ?><br><span class="gem-eng">by <?= h($n['username'] ?? 'Unknown') ?></span></td>
+        <td class="gem-count-col" data-label="Gematria"><?= !empty($g_bits) ? implode('<br>', $g_bits) : '&mdash;' ?></td>
+        <td class="search-verses" data-label="Note"><?= bbcode_to_html($n['note_text'] ?? '') ?></td>
     </tr>
 <?php endforeach; ?>
 </tbody>
@@ -254,6 +254,9 @@ $rows          = $search_result['rows'];
 $truncated     = $search_result['truncated'];
 $not_found     = $search_result['not_found'];
 $norms         = $search_result['norms'];
+$total_occ     = array_key_exists('total_occ', $search_result)
+                  ? ($search_result['total_occ'] !== null ? (int)$search_result['total_occ'] : null)
+                  : null;
 $error         = !empty($search_result['error'])
                   ? 'A database error occurred. Please try again.'
                   : null;
@@ -285,6 +288,8 @@ $mode_label  = match($mode) {
 };
 $multi       = ($mode !== 'phrase') && count($terms) > 1;
 $display_q   = ($mode === 'phrase') ? h($norms[0]) : implode(' + ', array_map('h', $norms));
+$show_total_occ = ($mode === 'phrase' || ($mode === 'text' && count($terms) === 1))
+                  && $total_occ !== null;
 ?>
 <?php bible_render_layout_header(); ?>
 <html>
@@ -309,6 +314,9 @@ $display_q   = ($mode === 'phrase') ? h($norms[0]) : implode(' + ', array_map('h
             <?php endif; ?>
             <?php if (!$error): ?>
                 &nbsp;&mdash;&nbsp;<?= $verse_count ?> verse<?= $verse_count !== 1 ? 's' : '' ?>
+                <?php if ($show_total_occ): ?>
+                    , <?= $total_occ ?> total occurrence<?= $total_occ !== 1 ? 's' : '' ?>
+                <?php endif; ?>
                 <?= $truncated ? '<span class="trunc-note">(showing first 6 000)</span>' : '' ?>
             <?php endif; ?>
         </span>

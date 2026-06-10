@@ -21,10 +21,16 @@ function search_escape_like(string $s): string {
     return str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $s);
 }
 
+// Remove Unicode bidi control characters that may be inserted by IMEs/editors.
+function search_strip_bidi_controls(string $s): string {
+    return preg_replace('/[\x{200E}\x{200F}\x{202A}-\x{202E}\x{2066}-\x{2069}]/u', '', $s);
+}
+
 // Normalise a Hebrew/Greek query string for comparison against word.text_search
 // / verse.text_search (which are stored already-normalised). The rules match
 // add_text_search.py / add_verse_search.py on the import side.
 function search_normalize_query(string $text, string $lang): string {
+    $text = search_strip_bidi_controls($text);
     $text = preg_replace('/\s*\([^)]+\)/u', '', $text);   // strip transliteration parens
     $text = str_replace(['/', '\\'], '', $text);           // strip STEPBible separators
     $text = trim($text);
@@ -52,6 +58,26 @@ function search_normalize_query(string $text, string $lang): string {
         ["\u{1FB3}",         "\u{1FC3}",         "\u{1FF3}"],
         $text
     );
+}
+
+// Convert user wildcard syntax to SQL LIKE syntax.
+// '*' means wildcard; without '*', callers should use exact matching.
+function search_star_to_like(string $s): string {
+    return str_replace('*', '%', search_escape_like($s));
+}
+
+function search_normalize_english_text(string $s): string {
+    $s = mb_strtolower($s);
+    $s = preg_replace('/[,;:.!?]/u', '', $s);
+    $s = trim((string)preg_replace('/\s+/u', ' ', $s));
+    return $s;
+}
+
+function search_wildcard_token_regex(string $needle): string {
+    $rx = preg_quote($needle, '/');
+    $rx = str_replace('\\*', '[^\\s]*', $rx);
+    // Token boundaries in normalized space-separated text.
+    return '/(?<=^|\s)' . $rx . '(?=\s|$)/u';
 }
 
 // ------------------------------------------------------------------
@@ -286,11 +312,18 @@ function bible_search_verses(string $mode, string $q_raw, string $lang = ''): ar
         if (!is_array($resp)) {
             return ['rows' => [], 'truncated' => false, 'not_found' => false, 'norms' => []];
         }
+        $resp_rows = $resp['rows'] ?? [];
+        $resp_total_occ = array_key_exists('total_occ', $resp) ? $resp['total_occ'] : null;
+        if ($mode === 'phrase' && $resp_total_occ === null) {
+            // Backward-compatible fallback for older remote API payloads.
+            $resp_total_occ = count($resp_rows);
+        }
         return [
             'rows'      => $resp['rows']      ?? [],
             'truncated' => !empty($resp['truncated']),
             'not_found' => !empty($resp['not_found']),
             'norms'     => $resp['norms']     ?? [],
+            'total_occ' => $resp_total_occ !== null ? (int)$resp_total_occ : null,
         ];
     }
 
@@ -305,22 +338,36 @@ function bible_search_verses(string $mode, string $q_raw, string $lang = ''): ar
     $params     = [];
     $where_sql  = '';
     $not_found  = false;
+    $occ_needles = [];
 
     if ($mode === 'phrase' && strtolower($lang) === 'english') {
         // English KJV phrase search — bible_kjv.Verse_Text_Clean LIKE.
         // Strip sentence punctuation from both sides; lowercase via LOWER().
-        $needle  = trim(preg_replace('/\s+/u', ' ', $q_raw));
+        $needle  = search_strip_bidi_controls(trim(preg_replace('/\s+/u', ' ', $q_raw)));
         $needle  = preg_replace('/[,;:.!?]/u', '', $needle);
         $needle  = mb_strtolower(trim(preg_replace('/\s+/u', ' ', $needle)));
+                $has_wild = str_contains($needle, '*');
         $norms[] = $q_raw;
-        $where_sql = "EXISTS (
-                        SELECT 1
-                          FROM bible_kjv k
-                         WHERE k.Book    = b.id
-                           AND k.Chapter = v.chapter
-                           AND k.Verse   = v.verse
-                           AND LOWER(REGEXP_REPLACE(k.Verse_Text_Clean, '[,;:.!?]', '')) LIKE ?)";
-        $params[] = '%' . search_escape_like($needle) . '%';
+                if ($has_wild) {
+                        $where_sql = "EXISTS (
+                                                        SELECT 1
+                                                            FROM bible_kjv k
+                                                         WHERE k.Book    = b.id
+                                                             AND k.Chapter = v.chapter
+                                                             AND k.Verse   = v.verse
+                                                             AND CONCAT(' ', TRIM(REGEXP_REPLACE(LOWER(REGEXP_REPLACE(k.Verse_Text_Clean, '[,;:.!?]', '')), '[[:space:]]+', ' ')), ' ') LIKE ?)";
+                        $params[] = '% ' . search_star_to_like($needle) . ' %';
+                } else {
+                        $where_sql = "EXISTS (
+                                                        SELECT 1
+                                                            FROM bible_kjv k
+                                                         WHERE k.Book    = b.id
+                                                             AND k.Chapter = v.chapter
+                                                             AND k.Verse   = v.verse
+                                                             AND CONCAT(' ', TRIM(REGEXP_REPLACE(LOWER(REGEXP_REPLACE(k.Verse_Text_Clean, '[,;:.!?]', '')), '[[:space:]]+', ' ')), ' ') LIKE ?)";
+                        $params[] = '% ' . search_escape_like($needle) . ' %';
+                }
+                $occ_needles[] = ['needle' => $needle, 'has_wild' => $has_wild, 'lang' => 'english'];
     } elseif ($mode === 'phrase') {
         // Hebrew/Greek whole-phrase search against verse.text_search.
         $norm = search_normalize_query($q_raw, $lang);
@@ -333,9 +380,16 @@ function bible_search_verses(string $mode, string $q_raw, string $lang = ''): ar
                 $norm
             );
         }
+        $has_wild = str_contains($norm, '*');
         $norms[]   = $norm ?: $q_raw;
-        $where_sql = "v.text_search LIKE ?";
-        $params[]  = '%' . search_escape_like($norm) . '%';
+        if ($has_wild) {
+            $where_sql = "CONCAT(' ', v.text_search, ' ') LIKE ?";
+            $params[]  = '% ' . search_star_to_like($norm) . ' %';
+        } else {
+            $where_sql = "CONCAT(' ', v.text_search, ' ') LIKE ?";
+            $params[]  = '% ' . search_escape_like($norm) . ' %';
+        }
+        $occ_needles[] = ['needle' => $norm, 'has_wild' => $has_wild, 'lang' => 'non-english'];
     } else {
         $exists_clauses = [];
         if ($mode === 'strongs') {
@@ -365,25 +419,47 @@ function bible_search_verses(string $mode, string $q_raw, string $lang = ''): ar
             $text_terms = array_values(array_filter(
                 array_map('trim', preg_split('/[\s,]+/u', $q_raw))
             ));
-            if (strtolower($lang) === 'english') {
+                        if (strtolower($lang) === 'english') {
                 foreach ($text_terms as $term) {
-                    $needle = mb_strtolower(preg_replace('/[,;:.!?]/u', '', $term));
-                    $exists_clauses[] =
-                        "EXISTS (\n"
-                      . "  SELECT 1 FROM bible_kjv k\n"
-                      . "   WHERE k.Book = b.id AND k.Chapter = v.chapter AND k.Verse = v.verse\n"
-                      . "     AND LOWER(REGEXP_REPLACE(k.Verse_Text_Clean, '[,;:.!?]', '')) LIKE ?)";
-                    $params[] = '%' . search_escape_like($needle) . '%';
+                                $needle = mb_strtolower(preg_replace('/[,;:.!?]/u', '', search_strip_bidi_controls($term)));
+                                        $has_wild = str_contains($needle, '*');
+                                        if ($has_wild) {
+                                                $exists_clauses[] =
+                                                        "EXISTS (\n"
+                                                    . "  SELECT 1 FROM bible_kjv k\n"
+                                                    . "   WHERE k.Book = b.id AND k.Chapter = v.chapter AND k.Verse = v.verse\n"
+                                                . "     AND CONCAT(' ', TRIM(REGEXP_REPLACE(LOWER(REGEXP_REPLACE(k.Verse_Text_Clean, '[,;:.!?]', '')), '[[:space:]]+', ' ')), ' ') LIKE ?)";
+                                            $params[] = '% ' . search_star_to_like($needle) . ' %';
+                                        } else {
+                                                // Exact word match: pad normalized verse text with spaces and
+                                                // search for a whole-token pattern to avoid substring hits.
+                                                $exists_clauses[] =
+                                                        "EXISTS (\n"
+                                                    . "  SELECT 1 FROM bible_kjv k\n"
+                                                    . "   WHERE k.Book = b.id AND k.Chapter = v.chapter AND k.Verse = v.verse\n"
+                                                    . "     AND CONCAT(' ', TRIM(REGEXP_REPLACE(LOWER(REGEXP_REPLACE(k.Verse_Text_Clean, '[,;:.!?]', '')), '[[:space:]]+', ' ')), ' ') LIKE ?)";
+                                                $params[] = '% ' . search_escape_like($needle) . ' %';
+                                        }
                     $norms[]  = $term;
+                                        $occ_needles[] = ['needle' => $needle, 'has_wild' => $has_wild, 'lang' => 'english'];
                 }
             } else {
                 foreach ($text_terms as $term) {
                     $norm = search_normalize_query($term, $lang);
-                    $exists_clauses[] =
-                        "EXISTS (SELECT 1 FROM word w\n"
-                      . "         WHERE w.verse_id = v.id AND w.text_search LIKE ?)";
-                    $params[] = '%' . search_escape_like($norm) . '%';
+                                        $has_wild = str_contains($norm, '*');
+                                        if ($has_wild) {
+                                                $exists_clauses[] =
+                                                        "EXISTS (SELECT 1 FROM word w\n"
+                                                    . "         WHERE w.verse_id = v.id AND w.text_search LIKE ?)";
+                                                $params[] = search_star_to_like($norm);
+                                        } else {
+                                                $exists_clauses[] =
+                                                        "EXISTS (SELECT 1 FROM word w\n"
+                                                    . "         WHERE w.verse_id = v.id AND w.text_search = ?)";
+                                                $params[] = $norm;
+                                        }
                     $norms[]  = $norm ?: $term;
+                                        $occ_needles[] = ['needle' => $norm, 'has_wild' => $has_wild, 'lang' => 'non-english'];
                 }
             }
         }
@@ -424,10 +500,169 @@ function bible_search_verses(string $mode, string $q_raw, string $lang = ''): ar
         }
     }
 
+    // Occurrence count for single-term text/phrase searches.
+    // For multi-term text searches this is ambiguous, so we omit it.
+    $total_occ = null;
+    if (
+        !$not_found
+        && ($mode === 'text' || $mode === 'phrase')
+        && $where_sql !== ''
+        && count($occ_needles) === 1
+    ) {
+        try {
+            $occ_meta = $occ_needles[0];
+            $needle = is_array($occ_meta) ? (string)($occ_meta['needle'] ?? '') : (string)$occ_meta;
+            $has_wild = is_array($occ_meta) ? !empty($occ_meta['has_wild']) : false;
+            if ($needle !== '') {
+                if (strtolower($lang) === 'english') {
+                    if ($mode === 'text' && !$has_wild) {
+                        // Exact whole-word occurrence count.
+                        $occ_sql =
+                            "SELECT COALESCE(SUM((CHAR_LENGTH(CONCAT(' ', TRIM(REGEXP_REPLACE(LOWER(REGEXP_REPLACE(k.Verse_Text_Clean, '[,;:.!?]', '')), '[[:space:]]+', ' ')), ' '))"
+                          . " - CHAR_LENGTH(REPLACE(CONCAT(' ', TRIM(REGEXP_REPLACE(LOWER(REGEXP_REPLACE(k.Verse_Text_Clean, '[,;:.!?]', '')), '[[:space:]]+', ' ')), ' '), CONCAT(' ', ?, ' '), '')))"
+                          . " / NULLIF(CHAR_LENGTH(CONCAT(' ', ?, ' ')), 0)), 0) AS occ\n"
+                          . "   FROM verse v\n"
+                          . "   JOIN book b ON b.id = v.book_id\n"
+                          . "   JOIN bible_kjv k ON k.Book = b.id AND k.Chapter = v.chapter AND k.Verse = v.verse\n"
+                          . "  WHERE $where_sql";
+                        $occ_params = [$needle, $needle];
+                        $occ_params = array_merge($occ_params, $params);
+                    } elseif ($mode === 'text' && $has_wild) {
+                        // Wildcard token occurrence count (e.g. beginning*):
+                        // fetch normalized verse text for matched verses and count
+                        // token-level regex matches in PHP.
+                        $occ_sql =
+                            "SELECT LOWER(REGEXP_REPLACE(k.Verse_Text_Clean, '[,;:.!?]', '')) AS txt\n"
+                          . "   FROM verse v\n"
+                          . "   JOIN book b ON b.id = v.book_id\n"
+                          . "   JOIN bible_kjv k ON k.Book = b.id AND k.Chapter = v.chapter AND k.Verse = v.verse\n"
+                          . "  WHERE $where_sql";
+                        $occ_params = $params;
+                        $occ_stmt = $pdo->prepare($occ_sql);
+                        $occ_stmt->execute($occ_params);
+                        $regex = search_wildcard_token_regex($needle);
+                        $cnt = 0;
+                        foreach ($occ_stmt->fetchAll(PDO::FETCH_COLUMN) as $txt) {
+                            $norm_txt = search_normalize_english_text((string)$txt);
+                            if ($norm_txt === '') continue;
+                            $m = [];
+                            $cnt += preg_match_all($regex, $norm_txt, $m);
+                        }
+                        $total_occ = (int)$cnt;
+                        return [
+                            'rows'      => $rows,
+                            'truncated' => $truncated,
+                            'not_found' => $not_found,
+                            'norms'     => $norms,
+                            'total_occ' => $total_occ,
+                        ];
+                    } elseif ($mode === 'phrase' && $has_wild) {
+                        // Phrase wildcard occurrence count for English.
+                        // Count token-level wildcard matches in matched verses.
+                        $occ_sql =
+                            "SELECT LOWER(REGEXP_REPLACE(k.Verse_Text_Clean, '[,;:.!?]', '')) AS txt\n"
+                          . "   FROM verse v\n"
+                          . "   JOIN book b ON b.id = v.book_id\n"
+                          . "   JOIN bible_kjv k ON k.Book = b.id AND k.Chapter = v.chapter AND k.Verse = v.verse\n"
+                          . "  WHERE $where_sql";
+                        $occ_params = $params;
+                        $occ_stmt = $pdo->prepare($occ_sql);
+                        $occ_stmt->execute($occ_params);
+                        $regex = search_wildcard_token_regex($needle);
+                        $cnt = 0;
+                        foreach ($occ_stmt->fetchAll(PDO::FETCH_COLUMN) as $txt) {
+                            $norm_txt = search_normalize_english_text((string)$txt);
+                            if ($norm_txt === '') continue;
+                            $m = [];
+                            $cnt += preg_match_all($regex, $norm_txt, $m);
+                        }
+                        $total_occ = (int)$cnt;
+                        return [
+                            'rows'      => $rows,
+                            'truncated' => $truncated,
+                            'not_found' => $not_found,
+                            'norms'     => $norms,
+                            'total_occ' => $total_occ,
+                        ];
+                    } else {
+                        $occ_sql =
+                            "SELECT COALESCE(SUM((CHAR_LENGTH(LOWER(REGEXP_REPLACE(k.Verse_Text_Clean, '[,;:.!?]', '')))"
+                          . " - CHAR_LENGTH(REPLACE(LOWER(REGEXP_REPLACE(k.Verse_Text_Clean, '[,;:.!?]', '')), ?, '')))"
+                          . " / NULLIF(CHAR_LENGTH(?), 0)), 0) AS occ\n"
+                          . "   FROM verse v\n"
+                          . "   JOIN book b ON b.id = v.book_id\n"
+                          . "   JOIN bible_kjv k ON k.Book = b.id AND k.Chapter = v.chapter AND k.Verse = v.verse\n"
+                          . "  WHERE $where_sql";
+                        $occ_params = [$needle, $needle];
+                        $occ_params = array_merge($occ_params, $params);
+                    }
+                } elseif ($mode === 'phrase') {
+                    if ($has_wild) {
+                        // Phrase wildcard occurrence count for Hebrew/Greek.
+                        // Count phrase-level wildcard matches in matched verses.
+                        $occ_sql =
+                            "SELECT v.text_search AS txt\n"
+                          . "   FROM verse v\n"
+                          . "   JOIN book b ON b.id = v.book_id\n"
+                          . "  WHERE $where_sql";
+                        $occ_params = $params;
+                        $occ_stmt = $pdo->prepare($occ_sql);
+                        $occ_stmt->execute($occ_params);
+                        $regex = search_wildcard_token_regex($needle);
+                        $cnt = 0;
+                        foreach ($occ_stmt->fetchAll(PDO::FETCH_COLUMN) as $txt) {
+                            $norm_txt = trim((string)$txt);
+                            if ($norm_txt === '') continue;
+                            $m = [];
+                            $cnt += preg_match_all($regex, $norm_txt, $m);
+                        }
+                        $total_occ = (int)$cnt;
+                        return [
+                            'rows'      => $rows,
+                            'truncated' => $truncated,
+                            'not_found' => $not_found,
+                            'norms'     => $norms,
+                            'total_occ' => $total_occ,
+                        ];
+                    }
+                    $occ_sql =
+                        "SELECT COALESCE(SUM((CHAR_LENGTH(CONCAT(' ', v.text_search, ' '))"
+                      . " - CHAR_LENGTH(REPLACE(CONCAT(' ', v.text_search, ' '), CONCAT(' ', ?, ' '), '')))"
+                      . " / NULLIF(CHAR_LENGTH(CONCAT(' ', ?, ' ')), 0)), 0) AS occ\n"
+                      . "   FROM verse v\n"
+                      . "   JOIN book b ON b.id = v.book_id\n"
+                      . "  WHERE $where_sql";
+                    $occ_params = [$needle, $needle];
+                    $occ_params = array_merge($occ_params, $params);
+                } else {
+                                        $occ_sql =
+                                                "SELECT COUNT(*) AS occ\n"
+                                            . "  FROM verse v\n"
+                                            . "  JOIN book b ON b.id = v.book_id\n"
+                                            . "  JOIN word w ON w.verse_id = v.id\n"
+                                            . " WHERE $where_sql\n"
+                                            . ($has_wild
+                                                    ? "   AND w.text_search LIKE ?"
+                                                    : "   AND w.text_search = ?");
+                    $occ_params = $params;
+                                        $occ_params[] = $has_wild ? search_star_to_like($needle) : $needle;
+                }
+
+                $occ_stmt = $pdo->prepare($occ_sql);
+                $occ_stmt->execute($occ_params);
+                $total_occ = (int)$occ_stmt->fetchColumn();
+            }
+        } catch (Throwable $e) {
+            // Keep search results usable even if occurrence counting fails.
+            $total_occ = ($mode === 'phrase') ? count($rows) : null;
+        }
+    }
+
     return [
         'rows'      => $rows,
         'truncated' => $truncated,
         'not_found' => $not_found,
         'norms'     => $norms,
+        'total_occ' => $total_occ,
     ];
 }

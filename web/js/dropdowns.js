@@ -1,8 +1,8 @@
 // dropdowns.js — chained book/chapter/verse dropdowns.
 // Also keeps the "Show N verses" count dropdown in sync with the current
 // chapter's verse count (max = number of verses in chapter).
-// Repopulates the edition dropdown when the user selects a different book
-// (OT Hebrew books get BHS+LXX; NT/LXX books get NA28+TR+LXX).
+// Repopulates the edition dropdown when the user selects a different book.
+// The edition list remains global and the server handles compatibility jumps.
 // Auto-submits the form when the user changes the Edition selection.
 (function () {
     const selBook    = document.getElementById('sel-book');
@@ -12,11 +12,8 @@
     const selEdition = document.getElementById('sel-edition');
     if (!selBook || !selChapter || !selVerse) return;
 
-    const OT_EDITIONS = [
+    const ALL_EDITIONS = [
         { code: 'BHS',        name: 'Biblia Hebraica Stuttgartensia' },
-        { code: 'LXX-Rahlfs', label: 'LXX', name: 'Rahlfs LXX 1935' }
-    ];
-    const NT_EDITIONS = [
         { code: 'NA28',       name: 'Nestle-Aland 28th edition' },
         { code: 'TR',         name: 'Scrivener Textus Receptus 1894' },
         { code: 'LXX-Rahlfs', label: 'LXX', name: 'Rahlfs LXX 1935' }
@@ -46,29 +43,40 @@
         selCount.dataset.max = String(maxN);
     }
 
-    // Repopulate the edition dropdown to match the currently-selected book's
-    // tradition: Hebrew OT books get BHS + LXX-Rahlfs; everything else gets
-    // NA28 + TR + LXX-Rahlfs. Preserves the current edition if it's valid
-    // in the new set; otherwise resets to the first option.
+    // Keep a global edition list regardless of selected book.
+    // The server will auto-jump to a compatible book when needed.
     function syncEditionOptions() {
         if (!selEdition) return;
-        const opt    = selBook.selectedOptions[0];
-        const lang   = opt ? opt.dataset.lang : '';
-        const isLxx  = opt ? opt.value.startsWith('Lxx') : false;
-        // OT editions for Hebrew MT books and all LXX books (which are OT Greek).
-        const editions = (lang === 'Hebrew' || isLxx) ? OT_EDITIONS : NT_EDITIONS;
         const current  = selEdition.value;
         selEdition.innerHTML = '';
-        for (const ed of editions) {
+        for (const ed of ALL_EDITIONS) {
             const o = document.createElement('option');
             o.value = ed.code;
             o.textContent = ed.label || ed.code;
             o.title = ed.name;
             selEdition.appendChild(o);
         }
-        const codes = editions.map(e => e.code);
-        selEdition.value = codes.includes(current) ? current : editions[0].code;
+        const codes = ALL_EDITIONS.map(e => e.code);
+        selEdition.value = codes.includes(current) ? current : ALL_EDITIONS[0].code;
         selEdition.disabled = false;
+    }
+
+    // Pick an edition that can render the chosen book directly.
+    // Priority order follows the global list order: BHS, NA28, TR, LXX.
+    function pickCompatibleEdition(bookCode, bookLang, currentEdition) {
+        const isLxxBook = !!bookCode && bookCode.startsWith('Lxx');
+        if (isLxxBook) {
+            return 'LXX-Rahlfs';
+        }
+        if (bookLang === 'Hebrew') {
+            // MT OT books are native in BHS.
+            return 'BHS';
+        }
+        // Greek canonical books (NT) prefer NA28 then TR.
+        if (currentEdition === 'NA28' || currentEdition === 'TR') {
+            return currentEdition;
+        }
+        return 'NA28';
     }
 
     selBook.addEventListener('change', function () {
@@ -77,12 +85,18 @@
         if (!selEdition || !selEdition.dataset.static) {
             syncEditionOptions();
         }
+        const opt = this.selectedOptions[0];
+        const targetBook = this.value;
+        const targetLang = opt ? (opt.dataset.lang || '') : '';
+        if (selEdition) {
+            selEdition.value = pickCompatibleEdition(targetBook, targetLang, selEdition.value);
+        }
         // Navigate directly so chapter/verse always reset to 1:1.
         // Preserve any extra form fields (width, letters, etc.) from the
         // current form so page-specific params survive book changes.
         const form = this.closest('form');
         const params = new URLSearchParams();
-        params.set('book',    this.value);
+        params.set('book',    targetBook);
         params.set('chapter', '1');
         params.set('verse',   '1');
         if (selEdition) params.set('edition', selEdition.value);

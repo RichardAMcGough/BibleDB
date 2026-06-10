@@ -2,6 +2,8 @@
 --
 -- phpMyAdmin-safe, idempotent notes schema migration.
 -- No PREPARE/EXECUTE dynamic SQL (to avoid phpMyAdmin parser/result bugs).
+-- Compatible with MySQL versions that do not support
+-- ALTER TABLE ... ADD COLUMN IF NOT EXISTS.
 --
 -- Applies the modern notes schema used by the web app:
 --   - verse_notes core columns (including is_public + gem_* fields)
@@ -34,14 +36,93 @@ CREATE TABLE IF NOT EXISTS verse_notes (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 2) Bring existing verse_notes up to expected shape
-ALTER TABLE verse_notes ADD COLUMN IF NOT EXISTS title VARCHAR(255) NOT NULL DEFAULT '' AFTER verse;
-ALTER TABLE verse_notes ADD COLUMN IF NOT EXISTS note_text TEXT NOT NULL AFTER title;
-ALTER TABLE verse_notes ADD COLUMN IF NOT EXISTS is_public TINYINT(1) NOT NULL DEFAULT 0 AFTER note_text;
-ALTER TABLE verse_notes ADD COLUMN IF NOT EXISTS gem_std INT NULL AFTER is_public;
-ALTER TABLE verse_notes ADD COLUMN IF NOT EXISTS gem_ord INT NULL AFTER gem_std;
-ALTER TABLE verse_notes ADD COLUMN IF NOT EXISTS gem_red INT NULL AFTER gem_ord;
-ALTER TABLE verse_notes ADD COLUMN IF NOT EXISTS selected_words VARCHAR(255) NULL AFTER gem_red;
-ALTER TABLE verse_notes ADD COLUMN IF NOT EXISTS edition_code VARCHAR(40) NULL AFTER selected_words;
+DROP PROCEDURE IF EXISTS sp_notes_add_missing_columns;
+DELIMITER $$
+CREATE PROCEDURE sp_notes_add_missing_columns()
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'verse_notes'
+          AND COLUMN_NAME = 'title'
+    ) THEN
+        ALTER TABLE verse_notes
+            ADD COLUMN title VARCHAR(255) NOT NULL DEFAULT '' AFTER verse;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'verse_notes'
+          AND COLUMN_NAME = 'note_text'
+    ) THEN
+        ALTER TABLE verse_notes
+            ADD COLUMN note_text TEXT NOT NULL AFTER title;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'verse_notes'
+          AND COLUMN_NAME = 'is_public'
+    ) THEN
+        ALTER TABLE verse_notes
+            ADD COLUMN is_public TINYINT(1) NOT NULL DEFAULT 0 AFTER note_text;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'verse_notes'
+          AND COLUMN_NAME = 'gem_std'
+    ) THEN
+        ALTER TABLE verse_notes
+            ADD COLUMN gem_std INT NULL AFTER is_public;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'verse_notes'
+          AND COLUMN_NAME = 'gem_ord'
+    ) THEN
+        ALTER TABLE verse_notes
+            ADD COLUMN gem_ord INT NULL AFTER gem_std;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'verse_notes'
+          AND COLUMN_NAME = 'gem_red'
+    ) THEN
+        ALTER TABLE verse_notes
+            ADD COLUMN gem_red INT NULL AFTER gem_ord;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'verse_notes'
+          AND COLUMN_NAME = 'selected_words'
+    ) THEN
+        ALTER TABLE verse_notes
+            ADD COLUMN selected_words VARCHAR(255) NULL AFTER gem_red;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'verse_notes'
+          AND COLUMN_NAME = 'edition_code'
+    ) THEN
+        ALTER TABLE verse_notes
+            ADD COLUMN edition_code VARCHAR(40) NULL AFTER selected_words;
+    END IF;
+END $$
+DELIMITER ;
+CALL sp_notes_add_missing_columns();
+DROP PROCEDURE IF EXISTS sp_notes_add_missing_columns;
 
 -- Ensure title is NOT NULL and non-empty where possible.
 UPDATE verse_notes SET title = CONCAT('Note ', id) WHERE title IS NULL OR title = '';

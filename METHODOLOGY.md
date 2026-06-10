@@ -16,7 +16,7 @@ Grounded in Swale (*Three Instincts*), Hays (*seven criteria*), Leonard (*inner-
 - **Q1 — Allusion:** Is there a genuine intertextual connection between two passages?
 - **Q2 — The IBC:** Does the chapter ↔ book numerical correspondence predict where allusions occur, beyond chance?
 
-**Q1 evidence never counts as Q2 evidence without the statistical control (below).** A brilliant allusion proves an allusion; it does not, by itself, prove the numbering.
+**Q1 evidence never counts as Q2 evidence on its own** — only a *blind, canon-wide* anchor search with honest miss-counting (below) can speak to the numbering. A brilliant allusion proves an allusion; it does not, by itself, prove book N is special.
 
 ---
 
@@ -33,13 +33,18 @@ Dating and direction of dependence remain *facts about the texts*. They are **da
 
 ---
 
+## Method, Not Machine
+
+The finding of allusions is, in Swale's words, **"both a science and an art" — not a checklist.** No formula spits out a verdict. We do not build a statistical apparatus; the established scholars never found one necessary, and neither do we. The quantitative rigor lives in **one place — the anchor words** — and their *rarity is the statistic.* Everything else is disciplined judgment.
+
 ## Stage A — Detection & Scoring (agency-neutral)
 
 Adjudicate each proposed link by the following, **in priority order**:
 
-1. **Shared language is the gate** *(Leonard 1, 3, 4, 5; Hays: Volume).*
-   Distinctive/rare language ≫ common; shared **phrases** ≫ single words; **density/accumulation** strengthens. Rarity = frequency across the **whole canon**, not within one query.
-   → **No distinctive shared language = "echo" at most. Cannot be graded strong, however rich the theme.** This rule is the primary guard against cherry-picking.
+1. **The anchor word is the gate** *(Leonard 1, 3, 4, 5; Hays: Volume).*
+   A real allusion is fastened by **rare or unique shared language** — a distinctive term, and better, a shared **phrase** or cluster. Rarity is measured across the **whole canon**: a term shared by only two or three passages is strong; one shared by fifty is worthless, however vivid the theme. Multiple anchors (**density/accumulation**) compound.
+   → **No rare/unique anchor = "echo" at most. Cannot be graded strong, whatever the thematic richness.** This is the primary guard against parallelomania, and it carries the evidential weight that statistics would otherwise have to.
+   → **Cross-testament (Greek ↔ Hebrew):** the NT alludes chiefly via the **Septuagint (LXX)**. Assess anchors on the LXX text, weighing the Hebrew *Vorlage* and, where it clarifies, a Greek→Hebrew back-translation. Surface forms differ; the anchor may live only in the Greek OT.
 
 2. **Context & coherence** *(Leonard 6; Hays: Thematic coherence; Sandmel).*
    Read full pericopes, never excerpted snippets. Does the shared language sit in a comparable argument?
@@ -68,9 +73,17 @@ Weigh **all** candidate causes neutrally — chance, scribal/canonical arrangeme
 
 ---
 
-## The Decisive Q2 Test: Statistical Control
+## Q2 Discipline: Follow the Anchor Where It Leads
 
-Removing the agent-bias criteria shifts the entire burden onto improbability. A chapter ↔ book result is evidence for the IBC **only if the true pairing's strength exceeds matched RANDOM control pairings.** Report the **margin over control**, not the raw score. This is the test that converts allusion-hunting into a real experiment.
+We do **not** bolt statistics onto the IBC. We apply the scholars' own method honestly — and that, by itself, supplies the missing rigor.
+
+The established method **starts from the anchor and follows it to wherever it leads in the canon.** The partner text is the *output* of the search, never its input. To pre-select the diagonal partner (Isaiah ch. N → book N) and then dig for anchors *there* is to run the method backwards, where it becomes a confirmation engine. That inversion is the entire selection-bias problem — and the only fix needed:
+
+1. **Follow the anchor canon-wide, blind.** Find a chapter's strongest anchors and trace them to whatever book they actually point at. The diagonal partner must *earn* the hit against the whole canon, not be handed it.
+2. **Count the misses.** The 66 diagonal cells are 66 trials. Report failures plainly — "13 hits" without the denominator proves nothing. The improbability of a unique anchor landing on the diagonal (~1 in 66) only holds if the search was blind and the misses are counted.
+3. **Record off-diagonal hits as data.** When an anchor lands off the diagonal (e.g., Isaiah 23's Tyre oracle → **Ezekiel 26–28**, *not* book #23), that is a real fact that can **weaken** the IBC. Surface it; never bury it.
+
+This is not extra machinery. It is the scholarly method with no thumb on the scale.
 
 ---
 

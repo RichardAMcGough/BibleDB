@@ -17,12 +17,38 @@ $_help_forum_url = htmlspecialchars(rtrim($_help_cfg['phpbb_url'] ?? '', '/'), E
   .help-wrap h2 { font-size: 1.15rem; margin: 28px 0 8px; border-bottom: 1px solid var(--border,#ddd); padding-bottom: 4px; }
   .help-wrap h3 { font-size: 1rem; margin: 18px 0 4px; }
   .help-wrap p  { margin: 6px 0 10px; line-height: 1.6; }
-  .help-wrap ul { margin: 4px 0 10px 20px; line-height: 1.7; }
+    .bible-main .help-wrap ul {
+      margin: 4px 0 10px 3cqh !important;
+        padding-left: 0 !important;
+      line-height: 1.7;
+        list-style: none !important;
+    }
+      .bible-main .help-wrap li {
+        position: relative;
+        margin: 0 0 2px 0;
+        padding: 0 0 0 1.15em !important;
+        text-indent: 0 !important;
+      }
+      .bible-main .help-wrap li::before {
+        content: "\2022";
+        position: absolute;
+        left: 0;
+        top: 0;
+        color: currentColor;
+        line-height: 1.7;
+      }
   .beta-banner {
       background: #fff8e1; border: 1px solid #f0c040; border-radius: 6px;
       padding: 12px 16px; margin: 12px 0 24px; font-size: 13px; line-height: 1.6;
   }
   .beta-banner strong { color: #7a5000; }
+  .bugfix-jump {
+      background: #eef6ff; border: 1px solid #8fb5de; border-radius: 6px;
+      padding: 10px 14px; margin: -8px 0 18px; font-size: 13px; line-height: 1.55;
+  }
+  .bugfix-jump a { color: #174a7a; font-weight: 600; text-decoration: underline; }
+  .bugfix-entry { margin: 12px 0 16px; }
+  .bugfix-entry h3 { margin-bottom: 6px; }
 </style>
 </head>
 <body>
@@ -40,6 +66,10 @@ $_help_forum_url = htmlspecialchars(rtrim($_help_cfg['phpbb_url'] ?? '', '/'), E
     visits. If something looks wrong, a hard refresh (<kbd>Ctrl+Shift+R</kbd> /
     <kbd>⌘⇧R</kbd>) will clear any cached pages. Please report persistent issues
     via the <a href="<?= $_help_forum_url ?>" style="color:inherit">Bible Wheel forum</a> — your feedback directly shapes what gets fixed or added next.
+  </div>
+
+  <div class="bugfix-jump">
+    Looking for recent fixes? Jump to the <a href="#bug-fix-log">Bug Fix Log</a> at the bottom of this page.
   </div>
 
   <!-- ═══════════════════════════════════════════════════════ WHAT'S NEW -->
@@ -131,6 +161,28 @@ $_help_forum_url = htmlspecialchars(rtrim($_help_cfg['phpbb_url'] ?? '', '/'), E
     <a href="<?= $_help_forum_url ?>">Bible Wheel Forum</a> to sign in.
     Once logged in, reload this page and your username will appear in the banner.
   </p>
+
+  <!-- ═════════════════════════════════════════════════════ BUG FIX LOG -->
+  <h2 id="bug-fix-log">Bug Fix Log</h2>
+
+  <div class="bugfix-entry">
+    <h3>June 2026 — Mobile Layout + Sidebar Drawer</h3>
+    <ul>
+      <li>Restored responsive wrapping for the verse header controls (including prev/next links and search row) to prevent horizontal overflow on narrow screens.</li>
+      <li>Fixed mobile sidebar drawer width/position so it opens to the correct visible width and aligns to the viewport edge.</li>
+      <li>Re-enabled smooth drawer slide animation on mobile while keeping the corrected width and edge alignment behavior.</li>
+    </ul>
+  </div>
+
+  <div class="bugfix-entry">
+    <h3>June 2026 — Search Wildcard Occurrence Totals</h3>
+    <ul>
+      <li>Fixed phrase wildcard occurrence counting so totals are no longer assumed to equal verse count.</li>
+      <li>English phrase wildcard and single-word wildcard searches now count actual token matches across matched verses.</li>
+      <li>Hebrew and Greek phrase wildcard searches now count real wildcard phrase matches in normalized verse text.</li>
+      <li>Example resolved: phrase search <strong>יהוה אלהי*</strong> now reports distinct verse count and total occurrence count correctly.</li>
+    </ul>
+  </div>
 
 </div>
 </main>

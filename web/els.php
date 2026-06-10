@@ -41,6 +41,19 @@ $default_edition = $is_ot ? 'BHS' : 'NA28';
 $edition_code = $_GET['edition'] ?? $default_edition;
 if (!in_array($edition_code, $valid_editions, true)) $edition_code = $default_edition;
 
+// Keep a global edition list and auto-jump to a compatible book when needed.
+if ($edition_code === 'BHS' && !$is_ot) {
+    $book_code = 'Gen';
+    $chapter = 1;
+    $verse = 1;
+    $is_ot = true;
+} elseif (($edition_code === 'NA28' || $edition_code === 'TR') && $is_ot) {
+    $book_code = 'Mat';
+    $chapter = 1;
+    $verse = 1;
+    $is_ot = false;
+}
+
 // Books and dropdown data (ELS only shows MT books; no LXX mode).
 $books    = bible_books();
 $chapters = bible_chapters($book_code);

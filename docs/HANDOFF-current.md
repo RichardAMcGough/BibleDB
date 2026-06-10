@@ -329,3 +329,51 @@ The verse-notes modal popup was significantly improved:
 
 ## Recommendation on long sessions
 For best results, start a fresh conversation and paste the key parts of this HANDOFF (or just say "read docs/HANDOFF-current.md and tell me the current state"). Fresh sessions tend to stay sharper on complex projects like this.
+## Latest (as of 2026-06-09)
+
+### FOLDER LAYOUT — READ FIRST (settled this session after much confusion)
+
+Three locations exist; only one is canonical:
+
+1. **`C:\Work\Resurrected\Bible Wheel Site\BibleDB`** — ★ CANONICAL source of
+   truth. Git repo. All development happens here.
+2. **`C:\Work\Resurrected\Bible Wheel Site\public_html\bible`** — localhost
+   deployment target. NEVER edit directly. Deploy with
+   `scripts/sync-web-to-public.ps1` (dry-run by default; add `-Apply`).
+3. **`C:\Work\Resurrected\Claude\BibleDB\Bible Database`** — DEPRECATED old
+   snapshot (pre-reorganization layout, no git). A Cowork session on
+   2026-06-09 accidentally developed there first; everything of value has
+   been ported here (including `scripts/import/import_bw_bibles.py`, which
+   existed only there). Its HANDOFF.md now carries a deprecation banner.
+   Do not develop there.
+
+### Gematria group brackets — phase 1 (this session, via Cowork)
+
+Labeled underline brackets annotate word groups in the interlinear with
+their gematria values (e.g. the Shema's nested 13 / 2×13 / 3×13 / 13×86).
+Design rationale, rendering model, and phase plan: **`docs/group-brackets-design.md`**.
+
+- `web/js/group-brackets.js` (new) — groups are sets of `data-pos` ordinals;
+  one bracket fragment per (visual line × contiguous run), open edges mark
+  line-wrap continuation; nesting depth from set-containment; primes shared
+  by ≥2 groups auto-colored, click a prime to pin (`?gpin=`); labels
+  click-to-edit (↺ resets, × deletes); state in `?groups=1-7;6-7|label` via
+  history.replaceState (the copy-link button inherits it). Hooks: wraps
+  `_gemRebuild` + ResizeObserver; reserves bracket room via row-gap override.
+- `web/style.css` — `.bracket-layer/.bracket-frag/.bracket-label/.gem-groups`
+  block appended; `.interlinear` gains `position:relative`.
+- `web/index.php` — `⊓ group` button + `#gem-groups` list in the gematria
+  panel; script tag after deep-link.js.
+- Usage: select words (click/paint) → `⊓ group` appears in the gematria
+  panel. Verified working by Richard.
+- Deferred: phase 2 = keep-group-on-one-line layout pass + label collision
+  polish; phase 3 = mobile (tap popover, long-press paint). See design doc.
+
+**Uncommitted as of this session** (commit from a native shell, NOT through
+the Cowork mount — mount git status shows phantom modifications from
+mode/EOL): `web/index.php`, `web/style.css`, `web/js/group-brackets.js`,
+`docs/group-brackets-design.md`, `scripts/import/import_bw_bibles.py`,
+`CLAUDE.md` (new, root), this file. Also still untracked from earlier work:
+`include/`, `web/include/`, `scripts/sync-web-to-public.ps1`, `.claude/`,
+`web/contiguous.php`, `mcp/gr_converter.py` — review and either track or
+gitignore. Remember to deploy web changes with sync-web-to-public.ps1.

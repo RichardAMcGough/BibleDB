@@ -58,6 +58,15 @@ If you want to run the full stack locally:
 - The **web UI** can run completely independently of the data import scripts if you use the remote api.
 - Most frontend development work happens inside the `web/` folder and requires no updates to the DB.
 
+### Web Source of Truth and Local IIS Sync
+
+- Treat `web/` as the canonical source.
+- If your local IIS site serves from `public_html/bible`, sync from `web/` using:
+   - Dry run: `powershell -ExecutionPolicy Bypass -File scripts/sync-web-to-public.ps1`
+   - Apply copy: `powershell -ExecutionPolicy Bypass -File scripts/sync-web-to-public.ps1 -Apply`
+- The sync script copies only changed files and does not delete target-only files.
+- By default it skips `config.php` in order to preserve local environment settings.
+
 ## Documentation
 
 - **`docs/HANDOFF-current.md`** — Recommended starting point (current workflows, single source of truth for DB name, easy fresh database creation).

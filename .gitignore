@@ -43,6 +43,15 @@ ehthumbs.db
 *.bak
 *.cache
 
+# Legacy biblewheel.com site chrome snapshots (contain live DB credentials
+# in wp-config.php — never commit). Runtime copy lives outside the repo at
+# ../include/include per web/config.php.
+/include/
+/web/include/
+
+# Generated caches
+mcp/gr_image_cache.json
+
 # Large data files (optional - uncomment if you want to ignore zips)
 # *.zip
 # *.sql

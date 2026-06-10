@@ -69,17 +69,50 @@ require_once __DIR__ . '/hebrew_grammar.php';
 //   bible_render_layout_styles();   // inside <head>
 //   bible_render_layout_banner();   // first thing inside <body>
 
+function bible_external_include_dir(): ?string {
+    static $cache = null;
+    if ($cache !== null) return $cache;
+
+    $cfg_path = __DIR__ . '/config.php';
+    $cfg = file_exists($cfg_path) ? require $cfg_path : [];
+    $candidates = [];
+
+    if (!empty($cfg['include_dir'])) {
+        $candidates[] = rtrim((string)$cfg['include_dir'], "\\/");
+    }
+
+    // Common local layouts:
+    // 1) repo-root/include (original assumption)
+    // 2) parent-site/include (current workspace layout)
+    // 3) parent-site/include/include (nested include dir on this host)
+    $candidates[] = __DIR__ . '/../include';
+    $candidates[] = __DIR__ . '/../../include';
+    $candidates[] = __DIR__ . '/../../include/include';
+
+    foreach ($candidates as $dir) {
+        if ($dir === '') continue;
+        $hdr = $dir . '/bwHeader.inc';
+        $bnr = $dir . '/bwBanner.php';
+        if (file_exists($hdr) && file_exists($bnr)) {
+            return $cache = $dir;
+        }
+    }
+
+    return $cache = null;
+}
+
 function bible_is_local_layout(): bool {
     static $cache = null;
     if ($cache !== null) return $cache;
-    return $cache = !file_exists(__DIR__ . '/../include/bwHeader.inc');
+    return $cache = (bible_external_include_dir() === null);
 }
 
 function bible_render_layout_header(): void {
     if (bible_is_local_layout()) {
         require __DIR__ . '/local_header.inc.php';
     } else {
-        require __DIR__ . '/../include/bwHeader.inc';
+        $inc = bible_external_include_dir();
+        require $inc . '/bwHeader.inc';
     }
 }
 
@@ -87,7 +120,8 @@ function bible_render_layout_banner(): void {
     if (bible_is_local_layout()) {
         require __DIR__ . '/local_banner.inc.php';
     } else {
-        require __DIR__ . '/../include/bwBanner.php';
+        $inc = bible_external_include_dir();
+        require $inc . '/bwBanner.php';
         // Production banner is external — inject our badge as a fixed overlay.
         bible_render_user_badge(false);
     }
@@ -157,8 +191,9 @@ function bible_render_user_badge(bool $inflow = true): void {
     $phpbb_path = trim($cfg['phpbb_path'] ?? '');
     $phpbb_url  = trim($cfg['phpbb_url']  ?? '');
     $force_show = !empty($cfg['show_user_badge']);
-    // If phpBB is not configured we'd show the generic dev user — suppress unless explicitly enabled.
-    if ($phpbb_path === '' && !$force_show) return;
+    // If phpBB isn't configured and no login URL is available we'd only show a
+    // generic dev user badge — suppress unless explicitly enabled.
+    if ($phpbb_path === '' && $phpbb_url === '' && !$force_show) return;
 
     $user = get_bible_user();
     $cls_fixed = $inflow ? '' : ' bible-user-badge--fixed';
@@ -187,8 +222,10 @@ function bible_render_user_badge(bool $inflow = true): void {
 // origin root (php -S localhost:8080). Cache-busted by file mtime.
 function bible_render_layout_styles(): void {
     if (!bible_is_local_layout()) {
-        // Production: also pull biblewheel.com's shared bw.css.
-        $bw = $_SERVER['DOCUMENT_ROOT'] . '/include/bw.css';
+        $inc = bible_external_include_dir();
+        // Production/live-layout mode: pull shared bw.css from the resolved
+        // include directory.
+        $bw = $inc ? ($inc . '/bw.css') : ($_SERVER['DOCUMENT_ROOT'] . '/include/bw.css');
         if (file_exists($bw)) {
             echo '<link href="/include/bw.css?v=' . filemtime($bw)
                . '" rel="stylesheet" type="text/css">' . "\n";

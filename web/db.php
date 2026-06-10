@@ -125,7 +125,7 @@ function get_bible_user(): array {
     $cfg_path = __DIR__ . '/config.php';
     $cfg = file_exists($cfg_path) ? require $cfg_path : [];
 
-    $phpbb_path = rtrim($cfg['phpbb_path'] ?? '', '/\\');
+    $phpbb_path = _resolve_phpbb_path($cfg);
     if ($phpbb_path !== '') {
         // Resolve relative paths against the web/ directory.
         if ($phpbb_path[0] !== '/' && !(strlen($phpbb_path) > 1 && $phpbb_path[1] === ':')) {
@@ -211,6 +211,58 @@ function get_bible_user(): array {
         'is_admin' => !empty($_SESSION['bible_notes_is_admin']),
     ];
     return $u;
+}
+
+/**
+ * Resolve phpBB filesystem path from config, with production-safe fallbacks.
+ * This keeps auth working when phpbb_path was accidentally omitted from config.php.
+ */
+function _resolve_phpbb_path(array $cfg): string {
+    $configured = trim((string)($cfg['phpbb_path'] ?? ''));
+    $candidates = [];
+
+    if ($configured !== '') {
+        $candidates[] = $configured;
+    }
+
+    // Derive candidate from phpbb_url + DOCUMENT_ROOT, e.g. /phpBB/ -> <docroot>/phpBB
+    $phpbb_url = trim((string)($cfg['phpbb_url'] ?? ''));
+    $doc_root = rtrim((string)($_SERVER['DOCUMENT_ROOT'] ?? ''), '/\\');
+    if ($phpbb_url !== '' && $doc_root !== '') {
+        $url_path = parse_url($phpbb_url, PHP_URL_PATH);
+        if (is_string($url_path) && $url_path !== '') {
+            $candidates[] = $doc_root . '/' . trim($url_path, '/\\');
+        }
+    }
+
+    // Common production and local conventions.
+    if ($doc_root !== '') {
+        $candidates[] = $doc_root . '/phpBB';
+        $candidates[] = $doc_root . '/phpbb';
+    }
+    $candidates[] = __DIR__ . '/../phpBB';
+    $candidates[] = __DIR__ . '/../phpbb';
+
+    foreach ($candidates as $candidate) {
+        $candidate = rtrim((string)$candidate, '/\\');
+        if ($candidate === '') continue;
+
+        // Resolve relative candidates against web/.
+        if ($candidate[0] !== '/' && !(strlen($candidate) > 1 && $candidate[1] === ':')) {
+            $candidate = __DIR__ . '/' . ltrim($candidate, '/\\');
+        }
+
+        $resolved = realpath($candidate);
+        if ($resolved === false) {
+            $resolved = $candidate;
+        }
+        $resolved = rtrim($resolved, '/\\');
+        if ($resolved !== '' && file_exists($resolved . '/config.php')) {
+            return $resolved . '/';
+        }
+    }
+
+    return '';
 }
 
 /**

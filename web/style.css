@@ -26,6 +26,7 @@
     --fsz-strongs:       12px;
     --fsz-grammar:       11px;
     --fsz-gematria:      12px;
+    --word-cell-gap:     14px;
     --bg-alt:    #f3f4f6;
 }
 * { box-sizing: border-box; }
@@ -90,6 +91,16 @@ body.full-width .gematria-panel { max-width: none; }
     font-size: 13px; padding: 3px 8px;
     border: 1px solid var(--border); border-radius: 4px;
     background: white; color: var(--fg);
+}
+.verse-card .ref-line .nav .word-search-bar #search-input[dir="rtl"] {
+    direction: rtl;
+    text-align: right;
+    unicode-bidi: plaintext;
+}
+.verse-card .ref-line .nav .word-search-bar #search-input[dir="ltr"] {
+    direction: ltr;
+    text-align: left;
+    unicode-bidi: plaintext;
 }
 .verse-card .ref-line .nav .word-search-bar button {
     background: var(--accent-bg); color: var(--accent); cursor: pointer;
@@ -253,12 +264,22 @@ a.gem-factor-link:hover { border-bottom-style: solid; }
 .search-book { white-space: nowrap; font-weight: 600; color: var(--fg); }
 .search-verses a { color: var(--accent); text-decoration: none; white-space: nowrap; }
 .search-verses a:hover { text-decoration: underline; }
+/* Keep note images readable on search page (especially mobile cards). */
+.search-table.search-table-gematria-notes .search-verses img {
+    display: block;
+    max-width: min(100%, 280px) !important;
+    width: auto !important;
+    height: auto !important;
+}
+.search-table.search-table-gematria-notes .search-verses a {
+    white-space: normal;
+}
 /* gematria results table */
 .gem-word-cell { white-space: nowrap; }
 .gem-tlit  { color: var(--gold); font-size: 12px; font-style: italic; }
 .gem-eng   { color: var(--orange); font-size: 12px; }
 .gem-strongs { font-family: monospace; color: var(--accent); white-space: nowrap; }
-.gem-count-col { width: 36px; text-align: center; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--muted); }
+.gem-count-col { width: 24px; text-align: center; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--muted); }
 .gem-clear {
     margin-left: auto; padding: 2px 8px;
     background: none; border: 1px solid var(--border); border-radius: 4px;
@@ -277,7 +298,7 @@ a.gem-factor-link:hover { border-bottom-style: solid; }
 .interlinear {
     margin: 16px 0 4px 0;
     display: flex; flex-wrap: wrap;
-    gap: 14px 14px;
+    gap: var(--word-cell-gap) var(--word-cell-gap);
     align-items: flex-start;
     user-select: none;
 }
@@ -287,7 +308,7 @@ a.gem-factor-link:hover { border-bottom-style: solid; }
 .interlinear.verse-newlines { display: block; }
 .interlinear.verse-newlines .verse-block {
     display: flex; flex-wrap: wrap;
-    gap: 14px 14px;
+    gap: var(--word-cell-gap) var(--word-cell-gap);
     align-items: flex-start;
     padding-top: 10px;
     margin-top: 4px;
@@ -304,10 +325,14 @@ a.gem-factor-link:hover { border-bottom-style: solid; }
 
 .verse-num {
     font-size: 22px; font-weight: 700; color: var(--fg);
-    line-height: 1; padding-top: 36px;
+    line-height: 1;
     min-width: 18px; margin-right: 8px;
     user-select: none;
     display: flex; flex-direction: column; align-items: center; gap: 2px;
+    /* Stretch to the height of the flex line and center the stack, so the
+       number stays vertically centered no matter which interlinear rows
+       (translit/English/Strong's/grammar) are shown or hidden. */
+    align-self: stretch; justify-content: center;
 }
 .verse-num-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
 .verse-order { font-size: 10px; font-weight: 400; color: var(--muted); line-height: 1; }
@@ -528,6 +553,14 @@ a.gem-factor-link:hover { border-bottom-style: solid; }
     width: 40px; height: 22px; padding: 1px 2px; border: 1px solid var(--border);
     border-radius: 3px; cursor: pointer;
 }
+.size-ctrl.range-ctrl input[type=range] {
+    width: 120px;
+}
+.size-value {
+    min-width: 2ch;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
 
 /* ---------- hide-class rules: instant client-side toggle ----------
    Uses display:none (not visibility:hidden) so the hidden text doesn't
@@ -694,12 +727,173 @@ main h2 { background-image: none; margin: 0; padding: 0; }
 /* ── Mobile ────────────────────────────────────────────────────────────── */
 .ref-abbr { display: none; }
 @media (max-width: 768px) {
+    main {
+        padding: 10px 8px;
+    }
+    .selector {
+        padding: 10px 10px;
+        border-radius: 5px;
+    }
+    .verse-card {
+        margin-top: 10px;
+        padding: 12px 10px;
+        border-radius: 5px;
+    }
     .ref-full { display: none; }
     .ref-abbr { display: inline; }
     .nav-label { display: none; }
     .sel-label { display: none; }
+    .verse-card .ref-line {
+        flex-wrap: wrap;
+        align-items: flex-start;
+        gap: 8px;
+    }
+    .verse-card .ref-line h2 {
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+    .verse-card .ref-line .nav {
+        flex: 1 1 100%;
+        min-width: 0;
+        gap: 6px;
+    }
     .verse-card .ref-line .nav .word-search-bar { flex: 1; min-width: 0; }
-    .verse-card .ref-line .nav .word-search-bar #search-input { flex: 1; min-width: 0; }
+    .verse-card .ref-line .nav .word-search-bar {
+        width: 100%;
+        margin-right: 0;
+        flex-wrap: wrap;
+    }
+    .verse-card .ref-line .nav .word-search-bar #search-input {
+        flex: 1 1 160px;
+        min-width: 0;
+    }
+    .verse-card .ref-line .nav .word-search-bar .search-phrase-label {
+        flex: 0 0 auto;
+    }
+
+    /* Gematria search tables need narrower columns than generic search tables on mobile. */
+    .search-table.search-table-gematria {
+        table-layout: fixed;
+    }
+    .search-table.search-table-gematria th,
+    .search-table.search-table-gematria td {
+        padding: 5px 6px;
+    }
+    .search-table.search-table-gematria th:first-child,
+    .search-table.search-table-gematria td:first-child,
+    .search-table.search-table-gematria th:nth-child(2),
+    .search-table.search-table-gematria td:nth-child(2) {
+        width: auto;
+    }
+    .search-table.search-table-gematria .gem-word-cell,
+    .search-table.search-table-gematria .gem-strongs {
+        white-space: normal;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+    }
+    .search-table.search-table-gematria .search-verses a {
+        white-space: normal;
+    }
+
+    /* Matching Notes table: stack columns vertically on mobile. */
+    .search-table.search-table-gematria-notes thead {
+        display: none;
+    }
+    .search-table.search-table-gematria-notes,
+    .search-table.search-table-gematria-notes tbody,
+    .search-table.search-table-gematria-notes tr,
+    .search-table.search-table-gematria-notes td {
+        display: block;
+        width: 100%;
+    }
+    .search-table.search-table-gematria-notes tr {
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--card);
+        margin: 0 0 10px;
+        padding: 8px;
+    }
+    .search-table.search-table-gematria-notes td {
+        border: 0;
+        padding: 4px 0 4px 74px;
+        white-space: normal;
+        position: relative;
+    }
+    .search-table.search-table-gematria-notes td::before {
+        content: attr(data-label);
+        color: var(--muted);
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        white-space: nowrap;
+        position: absolute;
+        left: 0;
+        top: 6px;
+        width: 64px;
+    }
+    .search-table.search-table-gematria-notes .gem-count-col {
+        text-align: left;
+        width: auto;
+    }
+    .search-table.search-table-gematria-notes .search-verses {
+        line-height: 1.45;
+    }
+}
+
+@media (max-width: 480px) {
+    main {
+        padding: 8px 6px;
+    }
+    .selector {
+        padding: 8px;
+    }
+    .verse-card {
+        padding: 10px 8px;
+    }
+    .verse-card .ref-line .nav {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px;
+        width: 100%;
+    }
+    .verse-card .ref-line .nav .word-search-bar {
+        grid-column: 1 / -1;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto auto auto;
+        align-items: center;
+        gap: 4px;
+        width: 100%;
+        min-width: 0;
+    }
+    .verse-card .ref-line .nav .word-search-bar #search-input {
+        width: 100%;
+        min-width: 0;
+        max-width: 100%;
+    }
+    .verse-card .ref-line .nav .word-search-bar .search-phrase-label {
+        white-space: nowrap;
+    }
+    .verse-card .ref-line .nav a {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        width: 100%;
+        padding: 6px 8px;
+    }
+    .verse-card .ref-line .nav > a.nav-next:only-of-type {
+        grid-column: 2 / 3;
+    }
+    .nav-label {
+        display: inline;
+    }
+
+    .search-table.search-table-gematria {
+        font-size: 13px;
+    }
+    .search-table.search-table-gematria-notes {
+        font-size: 13px;
+    }
 }
 .appbanner  { display: none; }
 /* The two-column table opened by bwBanner — full-width, no separator */
@@ -755,6 +949,12 @@ main.bible-main {
     flex-direction: column;
     gap: 2px;
 }
+.sidebar-inline-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px;
+    align-items: center;
+}
 .bible-sidebar-nav a {
     display: block;
     padding: 5px 8px;
@@ -768,6 +968,31 @@ main.bible-main {
 .bible-sidebar-nav a.active {
     background: var(--accent-bg);
     font-weight: 600;
+}
+.sidebar-options-inline {
+    white-space: nowrap;
+    font-size: 12px;
+    padding: 4px 7px;
+    border: 1px solid var(--border);
+}
+.sidebar-options-icon {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0 !important;
+    min-width: 24px;
+    line-height: 1;
+}
+.sidebar-options-icon svg {
+    display: block;
+}
+
+/* Keep header logo visual size aligned with site home header.
+   Home does not apply global border-box, but Bible Explorer does. */
+.bw-header-logo {
+    box-sizing: content-box;
 }
 
 /* ---------- Sidebar backdrop (mobile only) ---------- */
@@ -791,6 +1016,113 @@ main.bible-main {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 10px;
+}
+.local-dev-left {
+    flex: 0 0 auto;
+}
+.local-wheel-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    display: block;
+    border: 1px solid rgba(255,255,255,0.25);
+    overflow: hidden;
+    background: #101725;
+}
+.local-wheel-img {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: cover;
+}
+.local-dev-center {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    justify-content: center;
+    overflow: hidden;
+}
+.local-site-menu {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: nowrap;
+    justify-content: center;
+    gap: 8px 14px;
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+.local-site-menu::-webkit-scrollbar { display: none; }
+.local-site-menu a {
+    color: #dbeafe;
+    text-decoration: none;
+    font-size: 13px;
+    white-space: nowrap;
+}
+.local-site-menu a:hover {
+    color: #ffffff;
+    text-decoration: underline;
+}
+.local-site-menu-dropdown-wrap {
+    display: none;
+    position: relative;
+}
+.local-site-menu-toggle {
+    cursor: pointer;
+    padding: 6px 12px;
+    border: 1px solid #555;
+    border-radius: 4px;
+    background: #2f3653;
+    color: #eef2ff;
+    font-size: 13px;
+    white-space: nowrap;
+    user-select: none;
+}
+.local-site-menu-toggle[aria-expanded="true"] {
+    background: #3b4669;
+    border-color: #6b7aa8;
+}
+.local-site-menu-panel {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1300;
+    min-width: 190px;
+    max-width: min(86vw, 360px);
+    border: 1px solid #48506e;
+    border-radius: 6px;
+    background: #212640;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    overflow: hidden;
+}
+.local-site-menu-panel a {
+    padding: 8px 10px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+}
+.local-site-menu-panel a:first-child {
+    border-top: 0;
+}
+.local-dev-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+}
+#sidebar-toggle {
+    flex: 0 0 auto;
+    padding: 6px 10px;
+    border: 1px solid #555;
+    border-radius: 4px;
+    background: #3a3a57;
+    color: #eee;
+    cursor: pointer;
+    line-height: 1;
 }
 .bible-user-badge {
     display: inline-flex;
@@ -823,6 +1155,18 @@ main.bible-main {
 /* Mobile: hide the name, keep only the icon */
 @media (max-width: 480px) {
     .bible-user-badge .bible-user-name { display: none; }
+    .local-site-menu-inline {
+        display: none;
+    }
+    .local-site-menu-dropdown-wrap {
+        display: inline-block;
+    }
+    .local-wheel-icon {
+        width: 42px;
+        height: 42px;
+    }
+    .local-dev-actions { gap: 6px; }
+    #sidebar-toggle { padding: 6px 8px; }
 }
 
 /* ---------- Mobile: slide-in drawer ---------- */
@@ -832,21 +1176,24 @@ main.bible-main {
     .bible-sidebar {
         position: fixed;
         top: 0;
-        right: 0;
+        right: calc(-1 * (100vw - 100%));
         width: 220px !important;
         height: 100vh;
         max-height: none;
         padding: 24px 16px !important;
         background: var(--card);
         border-left: 1px solid var(--border);
-        box-shadow: -3px 0 16px rgba(0,0,0,0.15);
+        box-shadow: none;
         z-index: 1000;
         opacity: 1 !important;
         overflow-y: auto;
-        transform: translateX(100%);
-        transition: transform 0.3s ease;
+        transform: translateX(calc(100% + 24px));
+        transition: transform 0.24s ease, box-shadow 0.2s ease;
     }
-    .bible-sidebar.open { transform: translateX(0); }
+    .bible-sidebar.open {
+        transform: translateX(0);
+        box-shadow: -3px 0 16px rgba(0,0,0,0.15);
+    }
 }
 
 /* =====================================================================
@@ -1155,3 +1502,63 @@ main.bible-main {
     padding: 0 3px;
     line-height: 1.4;
 }
+
+/* ---------- gematria group brackets (group-brackets.js) ---------- */
+.interlinear { position: relative; }
+.bracket-layer {
+    position: absolute; left: 0; top: 0; width: 100%; height: 100%;
+    pointer-events: none;
+}
+.bracket-frag {
+    position: absolute;
+    border: 2px solid #6b7280; border-top: none;
+    border-radius: 0 0 5px 5px;
+}
+.bracket-frag.open-left {
+    border-left: none; border-bottom-left-radius: 0;
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 16px);
+    mask-image: linear-gradient(to right, transparent, #000 16px);
+}
+.bracket-frag.open-right {
+    border-right: none; border-bottom-right-radius: 0;
+    -webkit-mask-image: linear-gradient(to left, transparent, #000 16px);
+    mask-image: linear-gradient(to left, transparent, #000 16px);
+}
+.bracket-label {
+    position: absolute; transform: translateX(-50%);
+    white-space: nowrap; font-family: monospace; font-size: 12px;
+    line-height: 1.25; color: #374151; padding: 0 4px;
+    pointer-events: auto; direction: ltr;
+}
+.bracket-label sup { font-size: 9px; }
+.bracket-label .bl-text {
+    cursor: text; outline: none;
+    user-select: text; -webkit-user-select: text;
+}
+.bracket-label .bl-text[contenteditable="true"] {
+    background: #fff; outline: 1px solid var(--accent);
+    border-radius: 3px; padding: 0 3px; min-width: 24px; display: inline-block;
+}
+.bracket-label .bl-prime { cursor: pointer; font-weight: 700; }
+.bracket-label .bl-prime:hover { text-decoration: underline dotted; }
+.bracket-label .bl-prime.pinned { text-decoration: underline; }
+.bracket-label .bl-extra { color: var(--muted); }
+.bracket-label .bl-btn {
+    display: none; cursor: pointer; color: var(--muted);
+    padding: 0 2px; user-select: none; -webkit-user-select: none;
+}
+.bracket-label:hover .bl-btn { display: inline; }
+.bracket-label .bl-btn:hover { color: #111827; }
+.bracket-label.flash { background: #fef3c7; border-radius: 3px; }
+.gem-groups { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; }
+.gem-group-row {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-family: monospace; font-size: 12px; color: var(--fg);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 2px 7px; background: var(--card); cursor: pointer;
+}
+.gem-group-row:hover { background: #f3f4f6; }
+.gem-group-row .gg-n { color: var(--muted); }
+.gem-group-row .gg-del { cursor: pointer; color: var(--muted); padding: 0 1px; }
+.gem-group-row .gg-del:hover { color: #111827; }
+.gem-group-row.flash { background: #fef3c7; }

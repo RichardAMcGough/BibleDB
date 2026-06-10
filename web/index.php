@@ -74,9 +74,11 @@ $_notes_enabled = bible_notes_enabled();
 $_show_variant_indicator = !empty($_idx_cfg['show_variant_indicator']);
 unset($_idx_cfg);
 
-// Edition dropdown. OT Hebrew books get BHS + LXX-Rahlfs; NT + LXX books
-// get NA28 + TR + LXX-Rahlfs. LXX-Rahlfs is a mode switch that routes
-// lookups to the book_lxx / verse_lxx / word_lxx tables.
+// Edition dropdown. Keep the full edition list visible regardless of book,
+// then auto-jump to a compatible starting verse when the selected edition
+// does not match the current book's testament/tradition.
+// LXX-Rahlfs is a mode switch that routes lookups to the book_lxx /
+// verse_lxx / word_lxx tables.
 const OT_BOOK_CODES = [
     'Gen','Exo','Lev','Num','Deu','Jos','Jdg','Rut',
     '1Sa','2Sa','1Ki','2Ki','1Ch','2Ch','Ezr','Neh','Est',
@@ -87,18 +89,13 @@ const OT_BOOK_CODES = [
 
 $current_is_lxx_book = (strpos($book_code, 'Lxx') === 0);
 $is_ot_book  = !$current_is_lxx_book && in_array($book_code, OT_BOOK_CODES, true);
-$is_lxx_ot   = $current_is_lxx_book && in_array(substr($book_code, 3), OT_BOOK_CODES, true);
-
-if ($is_ot_book || $is_lxx_ot) {
-    $editions        = [
-        ['code' => 'BHS',        'name' => 'Biblia Hebraica Stuttgartensia'],
-        ['code' => 'LXX-Rahlfs', 'name' => 'Rahlfs LXX 1935'],
-    ];
-    $default_edition = $is_lxx_ot ? 'LXX-Rahlfs' : 'BHS';
-} else {
-    $editions        = bible_greek_editions(); // NA28, TR, LXX-Rahlfs
-    $default_edition = $current_is_lxx_book ? 'LXX-Rahlfs' : 'NA28';
-}
+$editions = [
+    ['code' => 'BHS',        'name' => 'Biblia Hebraica Stuttgartensia'],
+    ['code' => 'NA28',       'name' => 'Nestle-Aland 28th edition'],
+    ['code' => 'TR',         'name' => 'Scrivener Textus Receptus 1894'],
+    ['code' => 'LXX-Rahlfs', 'name' => 'Rahlfs LXX 1935'],
+];
+$default_edition = $current_is_lxx_book ? 'LXX-Rahlfs' : ($is_ot_book ? 'BHS' : 'NA28');
 $valid_codes  = array_column($editions, 'code');
 $edition_code = $_GET['edition'] ?? $default_edition;
 if (!in_array($edition_code, $valid_codes, true)) $edition_code = $default_edition;
@@ -134,27 +131,23 @@ if ($lxx_mode && !$current_is_lxx_book) {
         $chapter = 1; $verse = 1;
     }
     $current_is_lxx_book = false;
+} elseif (!$lxx_mode && !$current_is_lxx_book) {
+    // MT canonical book with non-LXX edition selected.
+    $is_ot_book = in_array($book_code, OT_BOOK_CODES, true);
+    if ($edition_code === 'BHS' && !$is_ot_book) {
+        // BHS cannot render NT books.
+        $book_code = 'Gen';
+        $chapter = 1; $verse = 1;
+    } elseif (($edition_code === 'NA28' || $edition_code === 'TR') && $is_ot_book) {
+        // NA28/TR cannot render MT OT books.
+        $book_code = 'Mat';
+        $chapter = 1; $verse = 1;
+    }
 }
 
-// After any auto-jump the $book_code may have changed (e.g. LxxGen → Gen or
-// Gen → LxxGen). Recompute the edition list so the dropdown reflects the
-// ACTUAL book being displayed, not the one that was in the URL.
+// After any auto-jump the $book_code may have changed (e.g. LxxGen → Gen,
+// Gen → Mat, or Mat → LxxGen). Recompute mode flags for data loading.
 $current_is_lxx_book = (strpos($book_code, 'Lxx') === 0);
-$is_ot_book          = !$current_is_lxx_book && in_array($book_code, OT_BOOK_CODES, true);
-$is_lxx_ot           = $current_is_lxx_book && in_array(substr($book_code, 3), OT_BOOK_CODES, true);
-if ($is_ot_book || $is_lxx_ot) {
-    $editions = [
-        ['code' => 'BHS',        'name' => 'Biblia Hebraica Stuttgartensia'],
-        ['code' => 'LXX-Rahlfs', 'name' => 'Rahlfs LXX 1935'],
-    ];
-} elseif ($current_is_lxx_book) {
-    $editions = bible_greek_editions(); // NT LXX books: NA28, TR, LXX-Rahlfs
-}
-// (else: NT book — $editions is already correct from the block above)
-$valid_codes  = array_column($editions, 'code');
-if (!in_array($edition_code, $valid_codes, true)) {
-    $edition_code = $is_ot_book ? 'BHS' : ($current_is_lxx_book ? 'LXX-Rahlfs' : 'NA28');
-}
 $lxx_mode = ($edition_code === 'LXX-Rahlfs');
 
 // Books list, chapters, verses come from the right tables for this mode.
@@ -246,11 +239,6 @@ ob_start(); ?>
     </select>
 <?php $selector_extra_fields = ob_get_clean();
 require __DIR__ . '/verse_selector.inc.php'; ?>
-    <button type="button" id="gear-btn" class="gear" aria-expanded="false" aria-controls="options-panel" title="Display options">
-        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-            <path fill="currentColor" d="M19.14 12.94a7.49 7.49 0 0 0 0-1.88l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96a7.4 7.4 0 0 0-1.62-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.59.24-1.13.56-1.62.94l-2.39-.96a.5.5 0 0 0-.61.22L2.71 8.84a.5.5 0 0 0 .12.64L4.86 11.06a7.5 7.5 0 0 0 0 1.88l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.14.24.43.34.68.24l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.26.42.5.42h3.84c.24 0 .45-.18.5-.42l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.25.1.54 0 .68-.24l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"/>
-        </svg>
-    </button>
 </div>
 
 <div id="options-panel" class="options-panel" hidden>
@@ -276,6 +264,7 @@ require __DIR__ . '/verse_selector.inc.php'; ?>
     </div>
     <div class="options-size-section">
         <span class="options-grouplabel">Font sizes</span>
+        <label class="size-ctrl range-ctrl">Word spacing <input type="range" data-size="word-gap" value="14" min="0" max="50" step="1"> <span class="size-value" data-size-value="word-gap">14</span> px</label>
         <label class="size-ctrl">Verse orig (Heb) <input type="number" data-size="verse-orig-heb" value="22" min="8" max="72" step="1"> px</label>
         <label class="size-ctrl">Verse orig (Grk) <input type="number" data-size="verse-orig-grk" value="18" min="8" max="72" step="1"> px</label>
         <label class="size-ctrl">Verse eng        <input type="number" data-size="verse-eng"       value="16" min="8" max="48" step="1"> px</label>
@@ -351,10 +340,10 @@ if ($actual_count > 0) {
                 <button type="button" id="search-btn" aria-label="Search"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M21 19.59l-5.4-5.4a7 7 0 1 0-1.41 1.41L19.59 21 21 19.59zM11 16a5 5 0 1 1 0-10 5 5 0 0 1 0 10z"/></svg></button>
             </div>
             <?php if ($prev): ?>
-                <a href="?book=<?= h($prev['osis_code']) ?>&amp;chapter=<?= (int)$prev['chapter'] ?>&amp;verse=<?= (int)$prev['verse'] ?><?= $count_qs ?>">&#8249;<span class="nav-label"> prev</span></a>
+                <a class="nav-prev" href="?book=<?= h($prev['osis_code']) ?>&amp;chapter=<?= (int)$prev['chapter'] ?>&amp;verse=<?= (int)$prev['verse'] ?><?= $count_qs ?>">&#8249;<span class="nav-label"> prev</span></a>
             <?php endif; ?>
             <?php if ($next): ?>
-                <a href="?book=<?= h($next['osis_code']) ?>&amp;chapter=<?= (int)$next['chapter'] ?>&amp;verse=<?= (int)$next['verse'] ?><?= $count_qs ?>"><span class="nav-label">next </span>&#8250;</a>
+                <a class="nav-next" href="?book=<?= h($next['osis_code']) ?>&amp;chapter=<?= (int)$next['chapter'] ?>&amp;verse=<?= (int)$next['verse'] ?><?= $count_qs ?>"><span class="nav-label">next </span>&#8250;</a>
             <?php endif; ?>
         </div>
     </div>
@@ -398,6 +387,8 @@ if ($actual_count > 0) {
         <div id="gem-rows" class="gem-rows"></div>
         <button id="gem-clear" class="gem-clear" title="Clear selection" style="display:none">× clear</button>
         <button id="gem-link-btn" class="gem-link-btn" title="Copy deep link to clipboard" style="display:none">&#128279; copy link</button>
+        <button id="gem-group-btn" class="gem-clear" title="Bracket the selected words as a labeled group" style="display:none">&#8851; group</button>
+        <div id="gem-groups" class="gem-groups"></div>
     </div>
 
     <!-- Single continuous interlinear across the whole range -->
@@ -640,16 +631,18 @@ const VERSE_REF  = <?= json_encode($range_ref_str) ?>;
 })();
 </script>
 </main>
+<?php require __DIR__ . '/bible_sidebar.php'; ?>
 
 <script src="js/options.js"></script>
 <script src="js/gematria.js"></script>
 <script src="js/word-selection.js"></script>
 <script src="js/variant-switcher.js"></script>
 <script src="js/dropdowns.js"></script>
-<script src="js/search-trigger.js"></script>
+<script src="js/search-trigger.js?v=2"></script>
 <script src="js/strongs-tooltip.js"></script>
 <script src="js/grammar-tooltip.js"></script>
 <script src="js/deep-link.js"></script>
+<script src="js/group-brackets.js"></script>
 <!-- BBCode toolbar (reuses phpBB editor.js for insertion/caret so it feels like posting on the forum).
      The globals must be declared before the editor script runs. -->
 <script>
@@ -675,7 +668,6 @@ const VERSE_REF  = <?= json_encode($range_ref_str) ?>;
     mq.addEventListener('change', applyBookNames);
 })();
 </script>
-<?php require __DIR__ . '/bible_sidebar.php'; ?>
 </div>
 
 <script>
