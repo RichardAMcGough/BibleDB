@@ -1524,11 +1524,22 @@ main.bible-main {
     -webkit-mask-image: linear-gradient(to left, transparent, #000 16px);
     mask-image: linear-gradient(to left, transparent, #000 16px);
 }
+/* Bridge between fragments of a non-contiguous group: risers drop from the
+   centers of the first/last fragments to a bar at the label text's midline. */
+.bracket-conn {
+    position: absolute; box-sizing: border-box;
+    border: 2px solid #6b7280; border-top: none;
+    border-radius: 0 0 6px 6px;
+}
+/* Tiny drop from each middle fragment's center down to the connector bar. */
+.bracket-riser { position: absolute; width: 2px; background: #6b7280; }
 .bracket-label {
     position: absolute; transform: translateX(-50%);
     white-space: nowrap; font-family: monospace; font-size: 12px;
     line-height: 1.25; color: #374151; padding: 0 4px;
     pointer-events: auto; direction: ltr;
+    background: var(--card, #fff);  /* masks the connector bar behind the text */
+    border-radius: 3px;
 }
 .bracket-label sup { font-size: 9px; }
 .bracket-label .bl-text {

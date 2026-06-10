@@ -19,8 +19,20 @@ vertical depth encodes nesting, overlaps never cross lines.
   bumped to the first collision-free row (per-line interval tracking).
 - **Line wrapping**: a group spanning a visual line break renders one fragment
   per line; the continuing edge is drawn open (no side border, bottom border
-  fades). Label sits under the group's widest fragment. RTL-safe: fragments are
-  computed from cell bounding rects, so direction never matters.
+  fades). Label sits under the group's widest same-line fragment cluster,
+  centered across that cluster's full span. RTL-safe: fragments are computed
+  from cell bounding rects, so direction never matters.
+- **Adjacency vs. overlap** (2026-06-09 session 2): only a true horizontal
+  overlap bumps a group to a lower row — adjacent groups share the row. Each
+  fragment is inset 1.5px per end (3px narrower) so same-row neighbors never
+  touch, even at word-gap 0.
+- **Non-contiguous groups**: fragments on one visual line are tied together by
+  a single connector — risers drop from the centers of the first and last
+  fragments to a bar at the label text's midline (the label's background masks
+  the bar behind the text), and each middle fragment drops a tiny riser to the
+  bar unless it would collide with the label (checked post-render against the
+  measured label box). The connector lives inside the existing label row, so
+  it costs no extra vertical space.
 - **Phase 2 (deferred)**: optional keep-together pass — force a line break
   before a group that would fit unwrapped on one line. Needs iterate-to-stable
   reflow; nothing in phase 1 blocks it.

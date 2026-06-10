@@ -11,6 +11,10 @@
 
     var PRIME_COLORS = ['#D85A30', '#1D9E75', '#534AB7', '#D4537E', '#BA7517', '#378ADD'];
     var BRACKET_H = 8;    // bracket glyph height (px)
+    var FRAG_INSET = 1.5; // shaved off each bracket end (3px total) so
+                          // adjacent same-row brackets never touch
+    var CONN_DROP = 9.5;  // connector depth: bracket bottom down to the
+                          // midline of the 12px label text (no extra rows)
     var ROW_H     = 28;   // bracket + label row pitch (px)
     var GAP_TOP   = 5;    // gap between text line bottom and first bracket row
     var BASE_GAP  = 14;   // matches .interlinear row gap in style.css
@@ -280,11 +284,16 @@
                 }
                 prevPos = p; prevLine = li;
             });
+            frags.forEach(function (f) {
+                if (f.x2 - f.x1 > FRAG_INSET * 2 + 2) { f.x1 += FRAG_INSET; f.x2 -= FRAG_INSET; }
+            });
             return frags;
         }
 
         // Row assignment: start at containment depth, bump past horizontal
-        // collisions with already-placed fragments on the same line.
+        // collisions with already-placed fragments on the same line. Only a
+        // real overlap bumps — adjacent groups stay on the same row (their
+        // brackets are inset by FRAG_INSET so they don't touch).
         var occupied = {};
         function rowFree(frags, row) {
             for (var i = 0; i < frags.length; i++) {
@@ -292,7 +301,7 @@
                 var ivs = occupied[f.line] && occupied[f.line][row];
                 if (!ivs) continue;
                 for (var k = 0; k < ivs.length; k++) {
-                    if (!(f.x2 < ivs[k][0] - 4 || f.x1 > ivs[k][1] + 4)) return false;
+                    if (!(f.x2 < ivs[k][0] || f.x1 > ivs[k][1])) return false;
                 }
             }
             return true;
@@ -321,10 +330,14 @@
 
         var theme = themePrimes();
         var html  = '';
+        var risers = [];   // middle-fragment drop lines, added post-render
         drawn.forEach(function (d) {
-            var widest = d.frags[0];
-            d.frags.forEach(function (f) {
-                if (f.x2 - f.x1 > widest.x2 - widest.x1) widest = f;
+            // Cluster fragments by visual line: a gap between fragments
+            // inside one cluster means the group is non-contiguous there.
+            var clusters = [];
+            d.frags.forEach(function (f, i) {
+                if (i === 0 || f.lineBreak) clusters.push([f]);
+                else clusters[clusters.length - 1].push(f);
             });
             d.frags.forEach(function (f, i) {
                 var contStart = i > 0 && f.lineBreak;
@@ -337,8 +350,42 @@
                         '" style="left:' + f.x1.toFixed(1) + 'px;top:' + yTop.toFixed(1) +
                         'px;width:' + (f.x2 - f.x1).toFixed(1) + 'px;height:' + BRACKET_H + 'px"></div>';
             });
-            var lx = (widest.x1 + widest.x2) / 2;
-            var ly = lines[widest.line].bottom + GAP_TOP + d.row * ROW_H + BRACKET_H + 1;
+            // Non-contiguous runs: one connector per cluster — risers drop
+            // from the centers of the first and last fragments to a single
+            // bar at the label text's midline, visually tying the whole group
+            // together. Lives inside the existing label row, so it costs no
+            // extra vertical space.
+            clusters.forEach(function (cl) {
+                if (cl.length < 2) return;
+                var cTop = lines[cl[0].line].bottom + GAP_TOP + d.row * ROW_H + BRACKET_H;
+                var Lf = cl[0], Rf = cl[0];
+                cl.forEach(function (f) {
+                    if (f.x1 < Lf.x1) Lf = f;
+                    if (f.x2 > Rf.x2) Rf = f;
+                });
+                var cx1 = (Lf.x1 + Lf.x2) / 2, cx2 = (Rf.x1 + Rf.x2) / 2;
+                if (cx2 - cx1 <= 0) return;
+                html += '<div class="bracket-conn" style="left:' + (cx1 - 1).toFixed(1) +
+                        'px;top:' + cTop.toFixed(1) + 'px;width:' + (cx2 - cx1 + 2).toFixed(1) +
+                        'px;height:' + CONN_DROP + 'px"></div>';
+                // Middle fragments get a tiny riser down to the bar (added
+                // after render so we can skip any that would hit the label).
+                cl.forEach(function (f) {
+                    if (f === Lf || f === Rf) return;
+                    risers.push({ gid: d.g.id, x: (f.x1 + f.x2) / 2, top: cTop });
+                });
+            });
+            // Label under the widest cluster, centered across its full span —
+            // for a non-contiguous cluster that's the midpoint between the
+            // first and last fragment, on the connector line.
+            var best = null, bestSpan = -1;
+            clusters.forEach(function (cl) {
+                var x1 = cl[0].x1, x2 = cl[0].x2;
+                cl.forEach(function (f) { x1 = Math.min(x1, f.x1); x2 = Math.max(x2, f.x2); });
+                if (x2 - x1 > bestSpan) { bestSpan = x2 - x1; best = { cl: cl, x1: x1, x2: x2 }; }
+            });
+            var lx = (best.x1 + best.x2) / 2;
+            var ly = lines[best.cl[0].line].bottom + GAP_TOP + d.row * ROW_H + BRACKET_H + 1;
             var inner = d.g.label != null ? customLabelHTML(d.g, theme) : defaultLabelHTML(d.g, theme);
             html += '<div class="bracket-label" data-gid="' + d.g.id +
                     '" style="left:' + lx.toFixed(1) + 'px;top:' + ly.toFixed(1) + 'px">' +
@@ -349,6 +396,28 @@
                     '</div>';
         });
         lyr.innerHTML = html;
+
+        // Post-pass: middle-fragment risers, skipping any that would collide
+        // with the (now-measurable) label of their own group.
+        if (risers.length) {
+            var iRect2 = interlinear.getBoundingClientRect();
+            var labelRects = {};
+            risers.forEach(function (r) {
+                if (!(r.gid in labelRects)) {
+                    var el = lyr.querySelector('.bracket-label[data-gid="' + r.gid + '"]');
+                    labelRects[r.gid] = el ? el.getBoundingClientRect() : null;
+                }
+                var lr = labelRects[r.gid];
+                if (lr && r.x >= lr.left - iRect2.left - 4 &&
+                          r.x <= lr.right - iRect2.left + 4) return;
+                var div = document.createElement('div');
+                div.className = 'bracket-riser';
+                div.style.left   = (r.x - 1).toFixed(1) + 'px';
+                div.style.top    = r.top.toFixed(1) + 'px';
+                div.style.height = (CONN_DROP - 2) + 'px';
+                lyr.appendChild(div);
+            });
+        }
     }
 
     var pending = false;
@@ -472,6 +541,11 @@
         syncGroupBtn();
         scheduleRender();
     };
+
+    // Geometry the ResizeObserver can miss: width-only reflows (e.g. the
+    // word-spacing slider) don't change the container height, so options.js
+    // pokes this hook directly after applying size changes.
+    window._bracketsRedraw = scheduleRender;
 
     // Geometry: covers window resize, font-size CSS-var changes, display-row
     // toggles, web-font load shifts. setGap() guards against feedback loops.

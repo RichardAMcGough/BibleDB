@@ -130,6 +130,9 @@
         for (const [key, varName] of Object.entries(cssVarMap)) {
             document.documentElement.style.setProperty(varName, sizes[key] + 'px');
         }
+        // Word-gap (and font-size) changes can reflow words without changing
+        // the container height, which the brackets' ResizeObserver misses.
+        if (window._bracketsRedraw) window._bracketsRedraw();
     }
 
     function updateSizeValueLabel(sizeKey, val) {
