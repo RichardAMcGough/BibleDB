@@ -456,3 +456,39 @@ toggling needs a magnified popover, not direct taps:
 
 Also parked: bracket phase 2 (keep-group-on-one-line, label collision
 polish between different groups) and phase 3 mobile for groups.
+
+### Session 5 (2026-06-11) — variant display/search overhaul, LIVE deploy
+
+Commits `c7ce605`…`1cfb394`. Validated with a fresh `stepbible4` pipeline
+build, then migrated the LIVE DB (biblewhe_stepbible3) successfully —
+all tests passed on biblewheel.com.
+
+- **Variant display (db.php)**: NA28/TR slot rendering keeps canonical
+  accented text on `equal` slots (TR no longer renders unaccented).
+  Accent enrichment for normalized tokens: same-verse match → movable-nu
+  donor → corpus-wide `word.text_search` lookup. TAGNT apparatus
+  overrides `equal` slots when it collates a reading the BibleWorks dumps
+  miss (Rom 1:27 TR ἄρρενες) — only accented apparatus rows qualify.
+  Verified: Rom 1:1 (transposition), Rom 1:27, Jhn 1:18.
+- **Search**: `variant.text_search` column (word search matches variant
+  readings); `search_corpus` table = ONE flat table of distinct witness
+  texts per verse (canonical + 8 edition texts + apparatus-patched),
+  built at the end of add_verse_search.py. Phrase search is a single
+  un-correlated scan — fast, and also fixed phrases crossing punctuation
+  (κυριος των κυριευοντων, 1Ti 6:15). Occurrence counts still come from
+  canonical text only (variant-only hits show 0) — known cosmetic gap.
+- **Pipeline**: run_pipeline's `run_sql_script` is DELIMITER-aware
+  (notes_live_migration.sql's stored-proc block broke fresh builds).
+- **Security**: hardcoded local MySQL password scrubbed from _db.py and
+  mcp/gr_converter.py (repo is PUBLIC; password remains in git history —
+  ROTATE the local MySQL root password; the live DB password also passed
+  through a chat session — rotate it too). _db.py now supports
+  BIBLE_DB_SOCKET for socket-only MySQL hosts.
+- **Live runbook used** (for next time): upload scripts/_db.py +
+  scripts/maintenance/{add_text_search,add_verse_search}.py under the
+  site, cPanel terminal: export BIBLE_DB_NAME/_USER/_PASSWORD,
+  BIBLE_DB_HOST=localhost, PYTHONIOENCODING=utf-8, then run both with
+  /usr/bin/python3.12 -B. Delete the server's scripts/ folder afterward.
+- **Known cleanup**: NA28 UI edition never uses the slot path (slots are
+  stored under edition code NA27) — works via canonical fallback, but
+  worth unifying in the pipeline someday. Occurrence-count polish above.
