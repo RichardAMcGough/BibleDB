@@ -12,6 +12,7 @@ Tools:
 
 import asyncio
 import base64
+import configparser
 import json
 import os
 import re
@@ -30,11 +31,20 @@ GR_DIR    = Path(r"C:\Work\Resurrected\Bible Wheel Site\public_html\GR")
 IMG_DIR   = Path(r"C:\Work\Resurrected\Bible Wheel Site\public_html\images\GR")
 CACHE_FILE = Path(__file__).parent / "gr_image_cache.json"
 
-# ── DB (write path to stepbible3) ─────────────────────────────────────────────
+# ── DB ────────────────────────────────────────────────────────────────────────
+# Credentials come from the repo-root config.ini [mariadb] and/or BIBLE_DB_*
+# env vars (never hardcoded — this file is public). The database defaults to
+# BIBLE_DB_NAME, falling back to the local working DB.
+_ini = configparser.ConfigParser()
+_ini.read(Path(__file__).resolve().parent.parent / "config.ini", encoding="utf-8")
+_sec = _ini["mariadb"] if "mariadb" in _ini else {}
 DB_CONFIG = dict(
-    host="127.0.0.1", port=3306,
-    user="root", password="Zubi3168^2!!",
-    database="stepbible3", charset="utf8mb4",
+    host=os.environ.get("BIBLE_DB_HOST", _sec.get("host", "127.0.0.1")),
+    port=int(os.environ.get("BIBLE_DB_PORT", _sec.get("port", "3306"))),
+    user=os.environ.get("BIBLE_DB_USER", _sec.get("user", "root")),
+    password=os.environ.get("BIBLE_DB_PASSWORD", _sec.get("password", "")),
+    database=os.environ.get("BIBLE_DB_NAME", "stepbible4"),
+    charset="utf8mb4",
     cursorclass=pymysql.cursors.DictCursor,
 )
 

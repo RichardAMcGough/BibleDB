@@ -59,11 +59,13 @@ def load_config(path: Optional[Union[str, Path]] = None) -> Dict[str, Any]:
     targeting, while still allowing convenient configuration of connection
     details.
     """
+    # NOTE: no credentials are hardcoded here (this file is public).
+    # Real values come from config.ini [mariadb] and/or BIBLE_DB_* env vars.
     cfg: Dict[str, Any] = {
         "host":     "127.0.0.1",
         "port":     "3306",
         "user":     "root",
-        "password": "Zubi3168^2!!",
+        "password": "",
         "database": None,
     }
 
