@@ -66,6 +66,38 @@ function search_star_to_like(string $s): string {
     return str_replace('*', '%', search_escape_like($s));
 }
 
+// True when the variant table carries the normalized text_search column
+// (added by add_text_search.py). Lets word search match variant readings
+// (e.g. TR ἄρρενες in Rom 1:27) while degrading gracefully on databases
+// that haven't run the migration yet.
+function search_variant_text_search_ready(PDO $pdo): bool {
+    static $ready = null;
+    if ($ready !== null) return $ready;
+    try {
+        $stmt = $pdo->query("SHOW COLUMNS FROM variant LIKE 'text_search'");
+        $ready = $stmt !== false && $stmt->fetch() !== false;
+    } catch (Throwable $e) {
+        $ready = false;
+    }
+    return $ready;
+}
+
+// True when search_corpus is available: one flat table of distinct
+// normalized witness texts per verse (canonical tagged text + every
+// edition's full text + apparatus-patched texts), built by
+// add_verse_search.py. Phrase search runs a single scan over it.
+function search_corpus_ready(PDO $pdo): bool {
+    static $ready = null;
+    if ($ready !== null) return $ready;
+    try {
+        $stmt = $pdo->query("SHOW TABLES LIKE 'search_corpus'");
+        $ready = $stmt !== false && $stmt->fetch() !== false;
+    } catch (Throwable $e) {
+        $ready = false;
+    }
+    return $ready;
+}
+
 function search_normalize_english_text(string $s): string {
     $s = mb_strtolower($s);
     $s = preg_replace('/[,;:.!?]/u', '', $s);
@@ -382,12 +414,18 @@ function bible_search_verses(string $mode, string $q_raw, string $lang = ''): ar
         }
         $has_wild = str_contains($norm, '*');
         $norms[]   = $norm ?: $q_raw;
-        if ($has_wild) {
-            $where_sql = "CONCAT(' ', v.text_search, ' ') LIKE ?";
-            $params[]  = '% ' . search_star_to_like($norm) . ' %';
+        $needle_like = '% ' . ($has_wild ? search_star_to_like($norm) : search_escape_like($norm)) . ' %';
+        if (search_corpus_ready($pdo)) {
+            // One flat scan over every witness text per verse: canonical
+            // tagged text, all edition texts (NA28/TR/SBL/WH/...), and
+            // apparatus-patched texts (e.g. TR ἄρρενες in Rom 1:27).
+            $where_sql = "v.id IN (SELECT sc.verse_id FROM search_corpus sc\n"
+                       . "          WHERE CONCAT(' ', sc.text_norm, ' ') LIKE ?)";
+            $params[]  = $needle_like;
         } else {
+            // Legacy fallback: canonical verse text only.
             $where_sql = "CONCAT(' ', v.text_search, ' ') LIKE ?";
-            $params[]  = '% ' . search_escape_like($norm) . ' %';
+            $params[]  = $needle_like;
         }
         $occ_needles[] = ['needle' => $norm, 'has_wild' => $has_wild, 'lang' => 'non-english'];
     } else {
@@ -444,19 +482,32 @@ function bible_search_verses(string $mode, string $q_raw, string $lang = ''): ar
                                         $occ_needles[] = ['needle' => $needle, 'has_wild' => $has_wild, 'lang' => 'english'];
                 }
             } else {
+                $with_variants = search_variant_text_search_ready($pdo);
                 foreach ($text_terms as $term) {
                     $norm = search_normalize_query($term, $lang);
                                         $has_wild = str_contains($norm, '*');
                                         if ($has_wild) {
-                                                $exists_clauses[] =
-                                                        "EXISTS (SELECT 1 FROM word w\n"
+                                                $clause = "EXISTS (SELECT 1 FROM word w\n"
                                                     . "         WHERE w.verse_id = v.id AND w.text_search LIKE ?)";
                                                 $params[] = search_star_to_like($norm);
+                                                if ($with_variants) {
+                                                        $clause = "($clause\n"
+                                                            . "  OR EXISTS (SELECT 1 FROM variant vv JOIN word w2 ON w2.id = vv.word_id\n"
+                                                            . "              WHERE w2.verse_id = v.id AND vv.text_search LIKE ?))";
+                                                        $params[] = search_star_to_like($norm);
+                                                }
+                                                $exists_clauses[] = $clause;
                                         } else {
-                                                $exists_clauses[] =
-                                                        "EXISTS (SELECT 1 FROM word w\n"
+                                                $clause = "EXISTS (SELECT 1 FROM word w\n"
                                                     . "         WHERE w.verse_id = v.id AND w.text_search = ?)";
                                                 $params[] = $norm;
+                                                if ($with_variants) {
+                                                        $clause = "($clause\n"
+                                                            . "  OR EXISTS (SELECT 1 FROM variant vv JOIN word w2 ON w2.id = vv.word_id\n"
+                                                            . "              WHERE w2.verse_id = v.id AND vv.text_search = ?))";
+                                                        $params[] = $norm;
+                                                }
+                                                $exists_clauses[] = $clause;
                                         }
                     $norms[]  = $norm ?: $term;
                                         $occ_needles[] = ['needle' => $norm, 'has_wild' => $has_wild, 'lang' => 'non-english'];

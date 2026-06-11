@@ -103,6 +103,53 @@ def main():
 
     print(f"\nDone. {len(rows):,} words updated.")
 
+    # ── variant.text_search ───────────────────────────────────────────────────
+    # Variant readings (TAGNT apparatus + generated NA28/TR diffs) get the
+    # same normalized column so word search can match them (e.g. searching
+    # the TR reading αρρενες finds Rom 1:27).
+    cur.execute("""
+        SELECT COUNT(*) FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'variant'
+    """, (cfg["database"],))
+    if cur.fetchone()[0] == 0:
+        print("No variant table — skipping variant.text_search.")
+    else:
+        cur.execute("""
+            SELECT COUNT(*) FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'variant'
+            AND COLUMN_NAME = 'text_search'
+        """, (cfg["database"],))
+        if cur.fetchone()[0] == 0:
+            print("Adding variant.text_search column …")
+            cur.execute("ALTER TABLE variant ADD COLUMN text_search VARCHAR(150) DEFAULT NULL")
+            cur.execute("CREATE INDEX idx_variant_text_search ON variant(text_search(50))")
+            conn.commit()
+            print("Column + index created.")
+        else:
+            print("variant.text_search already exists — updating values.")
+
+        cur.execute("""
+            SELECT v.id, w.language, v.text_original
+            FROM variant v JOIN word w ON w.id = v.word_id
+        """)
+        vrows = cur.fetchall()
+        print(f"  {len(vrows):,} variants to process …")
+        batch = []
+        for var_id, language, text_original in vrows:
+            if language == 'Hebrew':
+                ts = normalize_hebrew(text_original or '')
+            else:
+                ts = normalize_greek(text_original or '')
+            batch.append((ts, var_id))
+            if len(batch) >= 5000:
+                cur.executemany("UPDATE variant SET text_search = %s WHERE id = %s", batch)
+                conn.commit()
+                batch = []
+        if batch:
+            cur.executemany("UPDATE variant SET text_search = %s WHERE id = %s", batch)
+            conn.commit()
+        print(f"Done. {len(vrows):,} variants updated.")
+
     # ── Spot-check ────────────────────────────────────────────────────────────
     cur.execute("""
         SELECT w.text_original, w.text_search
@@ -111,9 +158,9 @@ def main():
         WHERE b.osis_code = 'Gen' AND v.chapter = 1 AND v.verse = 1
         ORDER BY w.position LIMIT 3
     """)
-    print("\nGen 1:1 spot-check (original → text_search):")
+    print("\nGen 1:1 spot-check (original -> text_search):")
     for orig, ts in cur.fetchall():
-        print(f"  {orig!r:40s} → {ts!r}")
+        print(f"  {orig!r:40s} -> {ts!r}")
 
     cur.execute("""
         SELECT w.text_original, w.text_search
@@ -122,9 +169,9 @@ def main():
         WHERE b.osis_code = 'Jhn' AND v.chapter = 1 AND v.verse = 1
         ORDER BY w.position LIMIT 3
     """)
-    print("\nJhn 1:1 spot-check (original → text_search):")
+    print("\nJhn 1:1 spot-check (original -> text_search):")
     for orig, ts in cur.fetchall():
-        print(f"  {orig!r:40s} → {ts!r}")
+        print(f"  {orig!r:40s} -> {ts!r}")
 
     cur.close()
     conn.close()

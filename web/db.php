@@ -1142,6 +1142,97 @@ function bible_norm_variant_field(?string $text): string {
     return trim((string)$t);
 }
 
+// Greek canonical text embeds the transliteration: "Χριστοῦ (Christou)".
+function bible_greek_text_parts(?string $text): array {
+    $t = trim((string)($text ?? ''));
+    if ($t === '') return ['', ''];
+    $p = mb_strpos($t, '(');
+    if ($p === false) return [$t, ''];
+    $greek    = trim(mb_substr($t, 0, $p));
+    $translit = trim(mb_substr($t, $p), "() \t");
+    return [$greek, $translit];
+}
+
+// Strip sentence punctuation (commas, periods, Greek high/question marks)
+// but keep elision apostrophes — used both for match keys and for clean
+// display of a word borrowed from a different slot.
+function bible_strip_greek_punct(string $t): string {
+    return trim((string)preg_replace('/[,\.;:\x{00B7}\x{0387}]+/u', '', $t));
+}
+
+// Restore accents/case for normalized slot/variant tokens by matching the
+// verse's tagged words. The diff pipeline compares accent-stripped
+// lowercase text, so transposed readings (e.g. Rom 1:1 TR "ιησου χριστου")
+// land in the DB normalized; the same lexical words exist fully pointed in
+// the tagged text of the verse, so we can borrow their display form.
+// Returns "Ἰησοῦ (Iēsou)" style text, or null when nothing in the verse
+// matches (a genuinely different reading stays as stored).
+function bible_accented_form(PDO $pdo, int $verse_id, string $token): ?string {
+    static $cache = [];
+    if (!isset($cache[$verse_id])) {
+        $map = [];
+        $stmt = $pdo->prepare(
+            'SELECT text_original FROM word WHERE verse_id = ? AND text_original IS NOT NULL'
+        );
+        $stmt->execute([$verse_id]);
+        foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $txt) {
+            [$greek, $translit] = bible_greek_text_parts((string)$txt);
+            $bare = bible_strip_greek_punct($greek);
+            $norm = bible_normalize_greek_variant_text($bare);
+            if ($norm === '' || isset($map[$norm])) continue;
+            $map[$norm] = $bare . ($translit !== '' ? ' (' . $translit . ')' : '');
+        }
+        $cache[$verse_id] = $map;
+    }
+    $norm = bible_normalize_greek_variant_text(bible_strip_greek_punct($token));
+    if ($norm === '') return null;
+    if (isset($cache[$verse_id][$norm])) return $cache[$verse_id][$norm];
+
+    // Movable-nu: borrow accents from the form that differs only by a
+    // final ν (e.g. TR "αρσεσι" from tagged "ἄρσεσιν", or vice versa).
+    $donor = $cache[$verse_id][$norm . 'ν'] ?? null;
+    if ($donor !== null) {
+        [$g, $tl] = bible_greek_text_parts($donor);
+        $g  = (string)preg_replace('/ν$/u', '', $g);
+        $tl = (string)preg_replace('/n$/u', '', $tl);
+        return $g . ($tl !== '' ? ' (' . $tl . ')' : '');
+    }
+    if (mb_substr($norm, -1) === 'ν') {
+        $donor = $cache[$verse_id][mb_substr($norm, 0, mb_strlen($norm) - 1)] ?? null;
+        if ($donor !== null) {
+            [$g, $tl] = bible_greek_text_parts($donor);
+            return $g . 'ν' . ($tl !== '' ? ' (' . $tl . 'n)' : '');
+        }
+    }
+
+    // Corpus-wide fallback: the tagged corpus itself is the accent lexicon —
+    // word.text_search holds the same normalization, so any occurrence of
+    // this form anywhere in the NT can donate its accents (e.g. TR-only
+    // υιος in Jhn 1:18 borrows from υἱός elsewhere).
+    static $corpus = [];
+    if (!array_key_exists($norm, $corpus)) {
+        $corpus[$norm] = null;
+        try {
+            $stmt = $pdo->prepare(
+                "SELECT text_original FROM word
+                  WHERE text_search = ? AND language = 'Greek'
+                    AND text_original IS NOT NULL
+                  LIMIT 1"
+            );
+            $stmt->execute([$norm]);
+            $txt = $stmt->fetchColumn();
+            if (is_string($txt) && $txt !== '') {
+                [$g, $tl] = bible_greek_text_parts($txt);
+                $g = bible_strip_greek_punct($g);
+                if ($g !== '') {
+                    $corpus[$norm] = $g . ($tl !== '' ? ' (' . $tl . ')' : '');
+                }
+            }
+        } catch (Throwable $e) { /* column missing — degrade silently */ }
+    }
+    return $corpus[$norm];
+}
+
 function bible_variant_dedupe_key(array $v): string {
     return implode('|', [
         (string)($v['kind'] ?? ''),
@@ -1417,27 +1508,85 @@ function bible_assemble_words(PDO $pdo, int $verse_id,
         if (!$rows) {
             // fall through
         } else {
+            // TAGNT apparatus overrides for 'equal' slots: the slot map is
+            // aligned from the bible_na27/bible_scr dumps, but the STEPBible
+            // apparatus sometimes collates an edition reading those dumps
+            // miss (e.g. Rom 1:27 TR ἄρρενες where BibleWorks SCR has
+            // αρσενες). Only accented apparatus rows qualify — the
+            // machine-generated diff rows are stored normalized and must
+            // never override the slot map.
+            $apparatus = [];
+            $ovStmt = $pdo->prepare(
+                "SELECT v.id AS variant_id, v.word_id, v.text_original,
+                        v.transliteration, v.translation, v.strongs, v.grammar
+                   FROM variant v
+                   JOIN variant_edition ve ON ve.variant_id = v.id
+                   JOIN word w2 ON w2.id = v.word_id
+                  WHERE w2.verse_id = ?
+                    AND ve.edition_id = ?
+                    AND v.kind IN ('spelling','meaning')
+                    AND v.position = w2.position"
+            );
+            $ovStmt->execute([$verse_id, $edition_id]);
+            foreach ($ovStmt->fetchAll() as $av) {
+                $avTxt = trim((string)($av['text_original'] ?? ''));
+                if ($avTxt === '') continue;
+                if ($avTxt === bible_normalize_greek_variant_text($avTxt)) continue;
+                $apparatus[(int)$av['word_id']] = $av;
+            }
+
             $out = [];
             foreach ($rows as $r) {
                 $token = (string)($r['token_text'] ?? '');
                 $slotTranslit = trim((string)($r['slot_transliteration'] ?? ''));
                 $slotPos = isset($r['slot_position']) ? (float)$r['slot_position'] : 0.0;
+                $op = (string)($r['op_type'] ?? 'equal');
 
                 if (!empty($r['slot_word_id']) && !empty($r['id'])) {
                     $w = $r;
-                    if ($token !== '' && (!isset($w['text_original']) || $token !== (string)$w['text_original'])) {
-                        $w['canonical_text_original'] = $w['text_original'] ?? null;
-                        $w['text_original'] = $token;
+                    // 'equal' slots: the canonical word IS this edition's
+                    // word — keep its accented display untouched. token_text
+                    // is accent-stripped lowercase for alignment only;
+                    // substituting it here is what made TR render unaccented.
+                    if ($op === 'equal' && isset($apparatus[(int)$r['slot_word_id']])) {
+                        $av = $apparatus[(int)$r['slot_word_id']];
+                        $avNorm  = bible_normalize_greek_variant_text(
+                            bible_strip_greek_punct((string)$av['text_original']));
+                        $tokNorm = bible_normalize_greek_variant_text(
+                            bible_strip_greek_punct($token));
+                        if ($avNorm !== '' && $avNorm !== $tokNorm) {
+                            // Apparatus says this edition reads differently
+                            // here even though the dumps aligned as equal.
+                            $w['canonical_text_original']   = $w['text_original'] ?? null;
+                            $w['canonical_transliteration'] = $w['transliteration'] ?? null;
+                            $w['canonical_translation']     = $w['translation'] ?? null;
+                            $w['canonical_strongs']         = $w['strongs'] ?? null;
+                            $w['canonical_grammar']         = $w['grammar'] ?? null;
+                            $w['text_original'] = (string)$av['text_original'];
+                            if (!empty($av['transliteration'])) $w['transliteration'] = $av['transliteration'];
+                            if (!empty($av['translation']))     $w['translation']     = $av['translation'];
+                            if (!empty($av['strongs']))         $w['strongs']         = $av['strongs'];
+                            if (!empty($av['grammar']))         $w['grammar']         = $av['grammar'];
+                            $w['source_variant_id'] = (int)$av['variant_id'];
+                        }
                     }
-                    if ($slotTranslit !== '') {
-                        $w['canonical_transliteration'] = $w['transliteration'] ?? null;
-                        $w['transliteration'] = $slotTranslit;
+                    if ($op !== 'equal' && $token !== '') {
+                        $display = bible_accented_form($pdo, $verse_id, $token) ?? $token;
+                        if (!isset($w['text_original']) || $display !== (string)$w['text_original']) {
+                            $w['canonical_text_original'] = $w['text_original'] ?? null;
+                            $w['text_original'] = $display;
+                        }
+                        if ($slotTranslit !== '') {
+                            $w['canonical_transliteration'] = $w['transliteration'] ?? null;
+                            $w['transliteration'] = $slotTranslit;
+                        }
                     }
                     // Keep the slot position for deterministic ordering when inserts surround words.
                     $w['position'] = $slotPos;
                     $out[] = $w;
                 } elseif ($token !== '') {
-                    $out[] = bible_slot_token_as_word_row((int)$r['ews_id'], $verse_id, $slotPos, $token, $slotTranslit);
+                    $display = bible_accented_form($pdo, $verse_id, $token) ?? $token;
+                    $out[] = bible_slot_token_as_word_row((int)$r['ews_id'], $verse_id, $slotPos, $display, $slotTranslit);
                 }
             }
             return $out;
@@ -1500,7 +1649,10 @@ function bible_assemble_words(PDO $pdo, int $verse_id,
             $w['canonical_translation']     = $w['translation']     ?? null;
             $w['canonical_strongs']         = $w['strongs']         ?? null;
             $w['canonical_grammar']         = $w['grammar']         ?? null;
-            if (!empty($v['text_original']))   $w['text_original']   = $v['text_original'];
+            if (!empty($v['text_original'])) {
+                $w['text_original'] = bible_accented_form($pdo, $verse_id, (string)$v['text_original'])
+                                      ?? $v['text_original'];
+            }
             if (!empty($v['transliteration'])) $w['transliteration'] = $v['transliteration'];
             if (!empty($v['translation']))     $w['translation']     = $v['translation'];
             if (!empty($v['strongs']))         $w['strongs']         = $v['strongs'];
@@ -1510,6 +1662,10 @@ function bible_assemble_words(PDO $pdo, int $verse_id,
         } elseif ($w) {
             $out[] = $w;
         } elseif ($v) {
+            if (!empty($v['text_original'])) {
+                $v['text_original'] = bible_accented_form($pdo, $verse_id, (string)$v['text_original'])
+                                      ?? $v['text_original'];
+            }
             $out[] = bible_variant_as_word_row($v, $verse_id, $edition_code);
         }
     }
@@ -1753,6 +1909,24 @@ function bible_attach_per_word_data(PDO $pdo, array &$words, string $language, ?
                 $vlist = array_values(array_filter($vlist, static function ($v) use ($wpos) {
                     return sprintf('%.2f', (float)($v['position'] ?? 0)) === $wpos;
                 }));
+            }
+
+            // Restore accents/case on normalized variant texts (the diff
+            // pipeline stores accent-stripped lowercase) so the variant menu
+            // and click-to-switch substitution display real Greek. Must match
+            // the same enrichment in the slot/merge render paths, or the
+            // active-variant inference below would fail its raw comparison.
+            if ($language === 'Greek' && !empty($vlist)) {
+                $enrich_vid = (int)($w['verse_id'] ?? 0);
+                if ($enrich_vid > 0) {
+                    foreach ($vlist as &$ev) {
+                        $vt = trim((string)($ev['text_original'] ?? ''));
+                        if ($vt === '') continue;
+                        $acc = bible_accented_form($pdo, $enrich_vid, $vt);
+                        if ($acc !== null) $ev['text_original'] = $acc;
+                    }
+                    unset($ev);
+                }
             }
 
             // In NA28/TR compare mode we intentionally load both editions' variant

@@ -392,17 +392,34 @@ def ensure_schema_migrations(cfg: dict, log) -> bool:
             conn.commit()
 
         def run_sql_script(path: Path):
-            sql_text = path.read_text(encoding="utf-8")
-            # This script intentionally avoids stored-procedure delimiters;
-            # simple semicolon splitting is sufficient here.
-            chunks = [c.strip() for c in sql_text.split(";")]
-            for chunk in chunks:
-                if not chunk:
-                    continue
-                lines = [ln for ln in chunk.splitlines() if not ln.lstrip().startswith("--")]
+            # Execute a mysql-client-flavored SQL file. DELIMITER is a client
+            # directive (not server SQL), so honor it here — stored-procedure
+            # bodies (e.g. notes_live_migration.sql's DELIMITER $$ block)
+            # must reach the server as single statements.
+            def flush(text: str):
+                lines = [ln for ln in text.splitlines()
+                         if not ln.lstrip().startswith("--")]
                 stmt = "\n".join(lines).strip()
                 if stmt:
                     cur.execute(stmt)
+
+            delim = ";"
+            buf = []
+            for raw in path.read_text(encoding="utf-8").splitlines():
+                stripped = raw.strip()
+                if stripped.upper().startswith("DELIMITER "):
+                    if "".join(buf).strip():
+                        flush("".join(buf))
+                    buf = []
+                    delim = stripped.split(None, 1)[1].strip()
+                    continue
+                buf.append(raw + "\n")
+                pending = "".join(buf).rstrip()
+                if pending.endswith(delim):
+                    flush(pending[: -len(delim)])
+                    buf = []
+            if "".join(buf).strip():
+                flush("".join(buf))
             conn.commit()
 
         # ── 01: variant.position ─────────────────────────────────────────────
