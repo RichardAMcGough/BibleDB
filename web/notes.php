@@ -13,7 +13,7 @@ if (!bible_notes_enabled()) {
 <head>
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>My Notes — Bible Browser</title>
+<title>My Notes — Bible Gems</title>
 <?php bible_render_layout_styles(); ?>
 </head>
 <body>
@@ -39,7 +39,7 @@ if (should_use_remote_api()) {
 <head>
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>My Notes — Bible Browser</title>
+<title>My Notes — Bible Gems</title>
 <?php bible_render_layout_styles(); ?>
 </head>
 <body>

@@ -14,7 +14,8 @@ $_local_menu_links = [
   ['label' => 'Bible Wheel',  'href' => 'https://biblewheel.com/wheel/intro.php'],
   ['label' => 'Canon Wheel',  'href' => 'https://biblewheel.com/wheel/canon.php'],
   ['label' => 'Christian Art','href' => 'https://biblewheel.com/art/'],
-  ['label' => 'Bible DB',     'href' => 'https://biblewheel.com/bible/index.php'],
+  ['label' => 'Bible Gems',   'href' => 'https://biblewheel.com/bible/index.php',
+   'title' => 'Interlinear Hebrew & Greek Bible with gematria study tools'],
   ['label' => 'Forum',        'href' => 'https://biblewheel.com/phpbb'],
 ];
 ?>
@@ -27,14 +28,14 @@ $_local_menu_links = [
   <div class="local-dev-center">
     <nav class="local-site-menu local-site-menu-inline" aria-label="Site menu">
       <?php foreach ($_local_menu_links as $_lm): ?>
-      <a href="<?= htmlspecialchars($_lm['href'], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($_lm['label'], ENT_QUOTES, 'UTF-8') ?></a>
+      <a href="<?= htmlspecialchars($_lm['href'], ENT_QUOTES, 'UTF-8') ?>"<?= isset($_lm['title']) ? ' title="' . htmlspecialchars($_lm['title'], ENT_QUOTES, 'UTF-8') . '"' : '' ?>><?= htmlspecialchars($_lm['label'], ENT_QUOTES, 'UTF-8') ?></a>
       <?php endforeach; ?>
     </nav>
     <div class="local-site-menu-dropdown-wrap">
       <button id="local-site-menu-toggle" type="button" class="local-site-menu-toggle" aria-expanded="false" aria-controls="local-site-menu-panel">Menu ▾</button>
       <nav id="local-site-menu-panel" class="local-site-menu local-site-menu-panel" aria-label="Collapsed site menu" hidden>
         <?php foreach ($_local_menu_links as $_lm): ?>
-        <a href="<?= htmlspecialchars($_lm['href'], ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($_lm['label'], ENT_QUOTES, 'UTF-8') ?></a>
+        <a href="<?= htmlspecialchars($_lm['href'], ENT_QUOTES, 'UTF-8') ?>"<?= isset($_lm['title']) ? ' title="' . htmlspecialchars($_lm['title'], ENT_QUOTES, 'UTF-8') . '"' : '' ?>><?= htmlspecialchars($_lm['label'], ENT_QUOTES, 'UTF-8') ?></a>
         <?php endforeach; ?>
       </nav>
     </div>

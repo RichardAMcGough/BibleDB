@@ -135,7 +135,7 @@ $all_raws = array_column($entries, 'raw');
 <head>
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Verse Comparison — Bible Browser</title>
+<title>Verse Comparison — Bible Gems</title>
 <?php bible_render_layout_styles(); ?>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
 <style>
@@ -158,7 +158,7 @@ $all_raws = array_column($entries, 'raw');
 <div class="bible-layout">
 <main class="bible-main">
 
-<a class="cmp-back" href="index.php">← Bible Browser</a>
+<a class="cmp-back" href="index.php">← Bible Gems</a>
 
 <!-- Shared options panel (gear button) -->
 <div class="selector" style="margin-bottom:8px">
@@ -281,7 +281,7 @@ $all_raws = array_column($entries, 'raw');
     <div class="cmp-card-head">
         <h2>
             <?= h($card['ref_label']) ?>
-            <a class="cmp-view-link" href="<?= h($view_url) ?>" title="Open in Bible Browser">↗ view</a>
+            <a class="cmp-view-link" href="<?= h($view_url) ?>" title="Open in Bible Gems">↗ view</a>
         </h2>
         <a class="cmp-remove-btn" href="<?= h($remove_url) ?>" title="Remove this verse" aria-label="Remove <?= h($card['ref_label']) ?>">×</a>
     </div>

@@ -15,7 +15,7 @@ if (should_use_remote_api()) {
 <head>
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Stats — Bible Browser</title>
+<title>Stats — Bible Gems</title>
 <?php bible_render_layout_styles(); ?>
 </head>
 <body>

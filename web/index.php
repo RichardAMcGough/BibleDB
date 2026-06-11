@@ -221,7 +221,7 @@ $next = $lxx_mode
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="author" content="Richard Amiel McGough">
 <?php emit_csrf_meta(); ?>
-<title>Bible Browser — <?= h($book_code) ?> <?= (int)$chapter ?>:<?= (int)$verse ?><?= $actual_count > 1 ? '-' . (int)$last_verse_num : '' ?></title>
+<title>Bible Gems — <?= h($book_code) ?> <?= (int)$chapter ?>:<?= (int)$verse ?><?= $actual_count > 1 ? '-' . (int)$last_verse_num : '' ?></title>
 <?php bible_render_layout_styles(); ?>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
 </head>
@@ -230,6 +230,7 @@ $next = $lxx_mode
 <?php bible_render_layout_banner(); ?>
 <div class="bible-layout">
 <main class="bible-main">
+<p class="gem-subtitle">Interlinear Hebrew &amp; Greek with gematria discovery tools — new here? <a href="help.php">Start with the Help guide</a>.</p>
 <div class="selector">
 <?php
 ob_start(); ?>
@@ -414,7 +415,7 @@ if ($actual_count > 0) {
         <div id="gem-rows" class="gem-rows"></div>
         <button id="gem-clear" class="gem-clear" title="Clear selection" style="display:none">× clear</button>
         <button id="gem-link-btn" class="gem-link-btn" title="Copy deep link to clipboard" style="display:none">&#128279; copy link</button>
-        <button id="gem-group-btn" class="gem-clear" title="Bracket the selected words as a labeled group" style="display:none">&#8851; group</button>
+        <button id="gem-group-btn" class="gem-clear" title="Bracket the selected words as a labeled group" style="display:none">&#8852; group</button>
         <div id="gem-groups" class="gem-groups"></div>
     </div>
 

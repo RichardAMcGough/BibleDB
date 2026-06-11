@@ -8,10 +8,11 @@ function _bsActive(string $file): string {
 ?>
 <aside id="bible-sidebar" class="bible-sidebar">
   <div class="bible-sidebar-inner">
-    <p class="bible-sidebar-title">Bible DB</p>
+    <p class="bible-sidebar-title">Bible Gems</p>
+    <p class="bible-sidebar-tagline" lang="en">&ldquo;It is the glory of God to conceal a thing: but the honour of kings is to search out a matter.&rdquo; &mdash;&nbsp;Proverbs&nbsp;25:2</p>
     <nav class="bible-sidebar-nav">
       <div class="sidebar-inline-row">
-        <a href="index.php"<?= _bsActive('index.php') ?>>Bible Explorer</a>
+        <a href="index.php"<?= _bsActive('index.php') ?>>Gem Finder</a>
         <?php if ($_bsCurrentPage === 'index.php'): ?>
         <a id="sidebar-options-link" class="sidebar-options-inline sidebar-options-icon" href="index.php?open_options=1" aria-label="Display options" title="Display options">
           <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">

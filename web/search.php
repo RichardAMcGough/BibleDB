@@ -75,7 +75,7 @@ if ($mode === 'gematria') {
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="author" content="Richard Amiel McGough">
-<title>Gematria <?= (int)$gem_value ?> &mdash; Bible Browser</title>
+<title>Gematria <?= (int)$gem_value ?> &mdash; Bible Gems</title>
 <?php bible_render_layout_styles(); ?>
 </head>
 <body>
@@ -297,7 +297,7 @@ $show_total_occ = ($mode === 'phrase' || ($mode === 'text' && count($terms) === 
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="author" content="Richard Amiel McGough">
-<title>Search: <?= h($q_raw) ?> &mdash; Bible Browser</title>
+<title>Search: <?= h($q_raw) ?> &mdash; Bible Gems</title>
 <?php bible_render_layout_styles(); ?>
 </head>
 <body>

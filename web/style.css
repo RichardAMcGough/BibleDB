@@ -392,6 +392,8 @@ a.gem-factor-link:hover { border-bottom-style: solid; }
 .word-cell:hover { background: #f3f4f6; }
 .word-cell.selected { background: var(--accent-bg); outline: 2px solid var(--accent); }
 .word-cell.kjv-hl  { background: #fef3c7; outline: 2px solid #f59e0b; }
+/* group locate flash — same highlight as the bracket label's .flash */
+.word-cell.group-flash { background: #fef3c7; }
 .variant-btn {
     display: block; width: 100%; height: 3px; margin-top: 3px;
     background: var(--variant); border: none; padding: 0;
@@ -999,12 +1001,32 @@ main.bible-main {
 
 /* ---------- Sidebar content ---------- */
 .bible-sidebar-title {
-    margin: 0 0 10px;
+    margin: 0 0 4px;
     font-size: 0.75rem;
     font-weight: 700;
     color: var(--muted);
     text-transform: uppercase;
     letter-spacing: 0.06em;
+}
+/* one-line orientation under the banner on the Gem Finder page */
+.gem-subtitle {
+    margin: 0 0 10px;
+    font-size: 12px;
+    color: var(--muted);
+}
+.gem-subtitle a { color: var(--accent); }
+
+.bible-sidebar-tagline {
+    margin: 0 0 12px;
+    font-size: 11px;
+    font-style: italic;
+    line-height: 1.5;
+    color: var(--muted);
+    /* narrow column: justify needs hyphenation to avoid ugly word gaps
+       (requires the lang attribute on the element) */
+    text-align: justify;
+    -webkit-hyphens: auto;
+    hyphens: auto;
 }
 .bible-sidebar-nav {
     display: flex;
@@ -1576,6 +1598,11 @@ main.bible-main {
     border: 2px solid #6b7280; border-top: none;
     border-radius: 0 0 5px 5px;
 }
+/* inverted variant drawn above the text */
+.bracket-frag.above {
+    border-top: 2px solid #6b7280; border-bottom: none;
+    border-radius: 5px 5px 0 0;
+}
 .bracket-frag.open-left {
     border-left: none; border-bottom-left-radius: 0;
     -webkit-mask-image: linear-gradient(to right, transparent, #000 16px);
@@ -1586,12 +1613,18 @@ main.bible-main {
     -webkit-mask-image: linear-gradient(to left, transparent, #000 16px);
     mask-image: linear-gradient(to left, transparent, #000 16px);
 }
+.bracket-frag.above.open-left  { border-top-left-radius: 0; }
+.bracket-frag.above.open-right { border-top-right-radius: 0; }
 /* Bridge between fragments of a non-contiguous group: risers drop from the
    centers of the first/last fragments to a bar at the label text's midline. */
 .bracket-conn {
     position: absolute; box-sizing: border-box;
     border: 2px solid #6b7280; border-top: none;
     border-radius: 0 0 6px 6px;
+}
+.bracket-conn.above {
+    border-top: 2px solid #6b7280; border-bottom: none;
+    border-radius: 6px 6px 0 0;
 }
 /* Tiny drop from each middle fragment's center down to the connector bar. */
 .bracket-riser { position: absolute; width: 2px; background: #6b7280; }
@@ -1623,7 +1656,14 @@ main.bible-main {
 .bracket-label:hover .bl-btn { display: inline; }
 .bracket-label .bl-btn:hover { color: #111827; }
 .bracket-label.flash { background: #fef3c7; border-radius: 3px; }
-.gem-groups { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; }
+/* above-the-text labels anchor by their bottom edge (top = bracket top - 1) */
+.bracket-label.above { transform: translate(-50%, -100%); }
+.gem-groups { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; align-items: stretch; }
+/* divider: chips left of it render below the text, right of it above */
+.gem-pipe {
+    width: 2px; min-height: 20px; align-self: stretch;
+    background: #9ca3af; border-radius: 1px; margin: 0 4px;
+}
 .gem-group-row {
     display: inline-flex; align-items: center; gap: 5px;
     font-family: monospace; font-size: 12px; color: var(--fg);
@@ -1637,3 +1677,4 @@ main.bible-main {
 .gem-group-row .gg-del { cursor: pointer; color: var(--muted); padding: 0 1px; }
 .gem-group-row .gg-del:hover { color: #111827; }
 .gem-group-row.flash { background: #fef3c7; }
+.gem-group-row.lit   { background: #fef3c7; border-color: #f59e0b; }

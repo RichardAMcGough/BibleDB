@@ -66,6 +66,7 @@
     }
     function removeGroup(id) {
         groups = groups.filter(function (g) { return g.id !== id; });
+        if (litId === id) setLit(null);
         save(); scheduleRender();
     }
     function togglePin(p) {
@@ -89,7 +90,7 @@
         var params = new URLSearchParams(location.search);
         if (groups.length) {
             params.set('groups', groups.map(function (g) {
-                return posToRanges(g.positions) +
+                return (g.above ? '^' : '') + posToRanges(g.positions) +
                        (g.label != null ? '|' + encodeURIComponent(g.label) : '');
             }).join(';'));
         } else {
@@ -104,6 +105,8 @@
         var raw = params.get('groups');
         if (raw) raw.split(';').forEach(function (gs) {
             if (!gs) return;
+            var above = gs.charAt(0) === '^';   // ^ = bracket above the text
+            if (above) gs = gs.slice(1);
             var bar        = gs.indexOf('|');
             var rangesPart = bar >= 0 ? gs.slice(0, bar) : gs;
             var label      = bar >= 0 ? decodeURIComponent(gs.slice(bar + 1)) : null;
@@ -117,7 +120,7 @@
                 }
             });
             positions.sort(function (a, b) { return a - b; });
-            if (positions.length) groups.push({ id: nextId++, positions: positions, label: label });
+            if (positions.length) groups.push({ id: nextId++, positions: positions, label: label, above: above });
         });
         var rp = params.get('gpin');
         if (rp) pins = rp.split(',').map(function (s) { return parseInt(s, 10); }).filter(isPrime);
@@ -204,17 +207,24 @@
         return layer;
     }
 
-    var lastExtra = -1;
-    function setGap(extra) {
-        if (extra === lastExtra) return false;
-        lastExtra = extra;
-        var rg = extra ? (BASE_GAP + extra) + 'px' : '';
+    var lastExtra = -1, lastExtraTop = -1;
+    function setGap(extra, extraTop) {
+        if (extra === lastExtra && extraTop === lastExtraTop) return false;
+        lastExtra = extra; lastExtraTop = extraTop;
+        var total = extra + extraTop;
+        var rg = total ? (BASE_GAP + total) + 'px' : '';
         interlinear.style.rowGap        = rg;
-        interlinear.style.paddingBottom = extra ? extra + 'px' : '';
+        interlinear.style.paddingBottom = extra    ? extra    + 'px' : '';
+        interlinear.style.paddingTop    = extraTop ? extraTop + 'px' : '';
         // verse-newlines mode: gaps live on the .verse-block flex containers
+        // (above-rows also need room between blocks; the first block is
+        // covered by the container's padding-top).
         Array.prototype.forEach.call(
             interlinear.querySelectorAll('.verse-block'),
-            function (vb) { vb.style.rowGap = rg; }
+            function (vb, i) {
+                vb.style.rowGap = rg;
+                vb.style.paddingTop = (extraTop && i > 0) ? (10 + extraTop) + 'px' : '';
+            }
         );
         return true;
     }
@@ -228,7 +238,7 @@
         if (!groups.length) {
             renderPanelList(null);
             lyr.innerHTML = '';
-            setGap(0);
+            setGap(0, 0);
             return;
         }
 
@@ -296,18 +306,47 @@
             return frags;
         }
 
+        // Same-line fragment clusters (a gap inside a cluster = the group is
+        // non-contiguous there) and the connector bars those clusters draw
+        // (center of first fragment to center of last).
+        function clustersOf(frags) {
+            var cls = [];
+            frags.forEach(function (f, i) {
+                if (i === 0 || f.lineBreak) cls.push([f]);
+                else cls[cls.length - 1].push(f);
+            });
+            return cls;
+        }
+        function barsFor(clusters) {
+            var bars = [];
+            clusters.forEach(function (cl) {
+                if (cl.length < 2) return;
+                var Lf = cl[0], Rf = cl[0];
+                cl.forEach(function (f) {
+                    if (f.x1 < Lf.x1) Lf = f;
+                    if (f.x2 > Rf.x2) Rf = f;
+                });
+                bars.push({ line: cl[0].line, x1: (Lf.x1 + Lf.x2) / 2, x2: (Rf.x1 + Rf.x2) / 2 });
+            });
+            return bars;
+        }
+
         // Row assignment: start at containment depth, bump past horizontal
-        // collisions with already-placed fragments on the same line. Only a
-        // real overlap bumps — adjacent groups stay on the same row (their
+        // collisions with already-placed groups on the same line. A group
+        // occupies its fragments PLUS its connector bars (the bar carries the
+        // label at its midpoint, so anything under it — another bar, or a
+        // group sitting inside the gap — would collide with the label). Only
+        // a real overlap bumps: adjacent groups still share the row (their
         // brackets are inset by FRAG_INSET so they don't touch).
-        var occupied = {};
-        function rowFree(frags, row) {
-            for (var i = 0; i < frags.length; i++) {
-                var f = frags[i];
-                var ivs = occupied[f.line] && occupied[f.line][row];
-                if (!ivs) continue;
-                for (var k = 0; k < ivs.length; k++) {
-                    if (!(f.x2 < ivs[k][0] || f.x1 > ivs[k][1])) return false;
+        var occupied = { below: {}, above: {} };
+        function rowFree(side, ivs, row) {
+            var lines2 = occupied[side];
+            for (var i = 0; i < ivs.length; i++) {
+                var v = ivs[i];
+                var occ = lines2[v.line] && lines2[v.line][row];
+                if (!occ) continue;
+                for (var k = 0; k < occ.length; k++) {
+                    if (!(v.x2 < occ[k][0] || v.x1 > occ[k][1])) return false;
                 }
             }
             return true;
@@ -320,58 +359,67 @@
         var ordered = groups.slice().sort(function (a, b) {
             return depthOf(a) - depthOf(b) || orderIdx[a.id] - orderIdx[b.id];
         });
-        var drawn = [], maxRows = 0, rowOf = {};
+        var drawn = [], maxRows = 0, maxRowsAbove = 0, rowOf = {};
+        function occAt(side, line, row) {
+            var lines2 = occupied[side];
+            lines2[line] = lines2[line] || {};
+            return lines2[line][row] = lines2[line][row] || [];
+        }
         ordered.forEach(function (g) {
             var frags = fragsFor(g);
             if (!frags.length) return;
+            var clusters = clustersOf(frags);
+            var ivs      = frags.concat(barsFor(clusters));
+            var side = g.above ? 'above' : 'below';
             var row = depthOf(g);
-            while (!rowFree(frags, row)) row++;
-            frags.forEach(function (f) {
-                occupied[f.line] = occupied[f.line] || {};
-                (occupied[f.line][row] = occupied[f.line][row] || []).push([f.x1, f.x2]);
-            });
-            drawn.push({ g: g, frags: frags, row: row });
+            while (!rowFree(side, ivs, row)) row++;
+            ivs.forEach(function (v) { occAt(side, v.line, row).push([v.x1, v.x2]); });
+            drawn.push({ g: g, frags: frags, clusters: clusters, row: row });
             rowOf[g.id] = row;
-            maxRows = Math.max(maxRows, row + 1);
+            if (g.above) maxRowsAbove = Math.max(maxRowsAbove, row + 1);
+            else         maxRows      = Math.max(maxRows, row + 1);
         });
 
         // Panel chips mirror the bracket levels (row asc, then user order).
+        lastRowOf = rowOf;
         renderPanelList(rowOf);
 
-        // Reserve vertical room below every line, then let the resize
+        // Reserve vertical room below/above every line, then let the resize
         // observer re-render once geometry settles.
-        if (setGap(maxRows ? GAP_TOP + maxRows * rowH : 0)) { scheduleRender(); return; }
+        if (setGap(maxRows      ? GAP_TOP + maxRows      * rowH : 0,
+                   maxRowsAbove ? GAP_TOP + maxRowsAbove * rowH : 0)) { scheduleRender(); return; }
 
         var theme = themePrimes();
         var html  = '';
         var risers = [];   // middle-fragment drop lines, added post-render
         drawn.forEach(function (d) {
-            // Cluster fragments by visual line: a gap between fragments
-            // inside one cluster means the group is non-contiguous there.
-            var clusters = [];
-            d.frags.forEach(function (f, i) {
-                if (i === 0 || f.lineBreak) clusters.push([f]);
-                else clusters[clusters.length - 1].push(f);
-            });
+            var clusters = d.clusters;
+            var abv = !!d.g.above;   // inverted bracket above the text
             d.frags.forEach(function (f, i) {
                 var contStart = i > 0 && f.lineBreak;
                 var contEnd   = i < d.frags.length - 1 && d.frags[i + 1].lineBreak;
                 var openLeft  = rtl ? contEnd   : contStart;
                 var openRight = rtl ? contStart : contEnd;
-                var yTop = lines[f.line].bottom + GAP_TOP + d.row * rowH;
-                html += '<div class="bracket-frag' +
+                var yTop = abv
+                    ? lines[f.line].top - GAP_TOP - d.row * rowH - BRACKET_H
+                    : lines[f.line].bottom + GAP_TOP + d.row * rowH;
+                html += '<div class="bracket-frag' + (abv ? ' above' : '') +
                         (openLeft ? ' open-left' : '') + (openRight ? ' open-right' : '') +
                         '" style="left:' + f.x1.toFixed(1) + 'px;top:' + yTop.toFixed(1) +
                         'px;width:' + (f.x2 - f.x1).toFixed(1) + 'px;height:' + BRACKET_H + 'px"></div>';
             });
-            // Non-contiguous runs: one connector per cluster — risers drop
+            // Non-contiguous runs: one connector per cluster — risers run
             // from the centers of the first and last fragments to a single
             // bar at the label text's midline, visually tying the whole group
             // together. Lives inside the existing label row, so it costs no
             // extra vertical space.
             clusters.forEach(function (cl) {
                 if (cl.length < 2) return;
-                var cTop = lines[cl[0].line].bottom + GAP_TOP + d.row * rowH + BRACKET_H;
+                // y of the bracket edge the connector attaches to
+                var edge = abv
+                    ? lines[cl[0].line].top - GAP_TOP - d.row * rowH - BRACKET_H
+                    : lines[cl[0].line].bottom + GAP_TOP + d.row * rowH + BRACKET_H;
+                var cTop = abv ? edge - CONN_DROP : edge;
                 var Lf = cl[0], Rf = cl[0];
                 cl.forEach(function (f) {
                     if (f.x1 < Lf.x1) Lf = f;
@@ -379,17 +427,19 @@
                 });
                 var cx1 = (Lf.x1 + Lf.x2) / 2, cx2 = (Rf.x1 + Rf.x2) / 2;
                 if (cx2 - cx1 <= 0) return;
-                html += '<div class="bracket-conn" style="left:' + (cx1 - 1).toFixed(1) +
+                html += '<div class="bracket-conn' + (abv ? ' above' : '') +
+                        '" style="left:' + (cx1 - 1).toFixed(1) +
                         'px;top:' + cTop.toFixed(1) + 'px;width:' + (cx2 - cx1 + 2).toFixed(1) +
                         'px;height:' + CONN_DROP + 'px"></div>';
-                // Middle fragments get a tiny riser down to the bar (added
-                // after render so we can skip any that would hit the label).
+                // Middle fragments get a tiny riser to the bar (added after
+                // render so we can skip any that would hit the label).
                 cl.forEach(function (f) {
                     if (f === Lf || f === Rf) return;
-                    risers.push({ gid: d.g.id, x: (f.x1 + f.x2) / 2, top: cTop });
+                    risers.push({ gid: d.g.id, x: (f.x1 + f.x2) / 2,
+                                  top: abv ? cTop + 2 : cTop });
                 });
             });
-            // Label under the widest cluster, centered across its full span —
+            // Label beyond the widest cluster, centered across its full span —
             // for a non-contiguous cluster that's the midpoint between the
             // first and last fragment, on the connector line.
             var best = null, bestSpan = -1;
@@ -399,9 +449,11 @@
                 if (x2 - x1 > bestSpan) { bestSpan = x2 - x1; best = { cl: cl, x1: x1, x2: x2 }; }
             });
             var lx = (best.x1 + best.x2) / 2;
-            var ly = lines[best.cl[0].line].bottom + GAP_TOP + d.row * rowH + BRACKET_H + 1;
+            var ly = abv
+                ? lines[best.cl[0].line].top - GAP_TOP - d.row * rowH - BRACKET_H - 1
+                : lines[best.cl[0].line].bottom + GAP_TOP + d.row * rowH + BRACKET_H + 1;
             var inner = d.g.label != null ? customLabelHTML(d.g, theme) : defaultLabelHTML(d.g, theme);
-            html += '<div class="bracket-label" data-gid="' + d.g.id +
+            html += '<div class="bracket-label' + (abv ? ' above' : '') + '" data-gid="' + d.g.id +
                     '" style="left:' + lx.toFixed(1) + 'px;top:' + ly.toFixed(1) + 'px">' +
                     '<span class="bl-text" spellcheck="false">' + inner + '</span>' +
                     (d.g.label != null
@@ -431,6 +483,12 @@
                 div.style.height = (CONN_DROP - 2) + 'px';
                 lyr.appendChild(div);
             });
+        }
+
+        // innerHTML rebuilt the labels — re-apply the persistent highlight.
+        if (litId != null) {
+            var litLbl = lyr.querySelector('.bracket-label[data-gid="' + litId + '"]');
+            if (litLbl) litLbl.classList.add('flash');
         }
     }
 
@@ -491,13 +549,33 @@
         });
     }
 
-    function flashGroup(id) {
-        var lbl = layer && layer.querySelector('.bracket-label[data-gid="' + id + '"]');
-        if (!lbl) return;
-        lbl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-        lbl.classList.add('flash');
-        setTimeout(function () { lbl.classList.remove('flash'); }, 1200);
+    // Presentation highlight: one group at a time stays lit (label + member
+    // word cells) until toggled off or another group is lit.
+    var litId = null, lastRowOf = null;
+    function setLit(id) {
+        Array.prototype.forEach.call(
+            interlinear.querySelectorAll('.word-cell.group-flash'),
+            function (c) { c.classList.remove('group-flash'); });
+        if (layer) Array.prototype.forEach.call(
+            layer.querySelectorAll('.bracket-label.flash'),
+            function (l) { l.classList.remove('flash'); });
+        litId = null;
+        var g = id != null ? byId(id) : null;
+        if (g) {
+            litId = id;
+            g.positions.forEach(function (p) {
+                var c = cellByPos(p);
+                if (c) c.classList.add('group-flash');
+            });
+            var lbl = layer && layer.querySelector('.bracket-label[data-gid="' + id + '"]');
+            if (lbl) {
+                lbl.classList.add('flash');
+                lbl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            }
+        }
+        renderPanelList(lastRowOf);   // chip lit-state indicator
     }
+    function toggleLit(id) { setLit(litId === id ? null : id); }
 
     var groupBtn = document.getElementById('gem-group-btn');
     function syncGroupBtn() {
@@ -513,8 +591,8 @@
         if (!positions.length) return;
         var key = positions.join(','), dup = null;
         groups.forEach(function (g) { if (g.positions.join(',') === key) dup = g; });
-        if (dup) { flashGroup(dup.id); return; }
-        groups.push({ id: nextId++, positions: positions, label: null });
+        if (dup) { setLit(dup.id); return; }
+        groups.push({ id: nextId++, positions: positions, label: null, above: false });
         Array.prototype.forEach.call(sel, function (c) { c.classList.remove('selected'); });
         save();
         if (window._gemRebuild) window._gemRebuild();
@@ -531,20 +609,25 @@
         if (!groups.length) { box.innerHTML = ''; return; }
         var orderIdx = {};
         groups.forEach(function (g, i) { orderIdx[g.id] = i; });
-        var sorted = groups.slice().sort(function (a, b) {
+        function chipSort(a, b) {
             var ra = rows && rows[a.id] !== undefined ? rows[a.id] : 0;
             var rb = rows && rows[b.id] !== undefined ? rows[b.id] : 0;
             return ra - rb || orderIdx[a.id] - orderIdx[b.id];
-        });
-        var html = '';
-        sorted.forEach(function (g) {
-            html += '<span class="gem-group-row" draggable="true" data-gid="' + g.id +
-                    '" title="Click to locate · drag to reorder">⊓ ' +
-                    groupSum(g, 'gemStd') +
-                    ' <span class="gg-n">(' + g.positions.length + 'w)</span>' +
-                    '<span class="gg-del" title="Remove group">×</span></span>';
-        });
-        box.innerHTML = html;
+        }
+        function chipHTML(g) {
+            return '<span class="gem-group-row' + (g.id === litId ? ' lit' : '') +
+                   '" draggable="true" data-gid="' + g.id +
+                   '" title="Click to highlight (again to clear) · drag to reorder · drag across the divider to flip above/below">' +
+                   (g.above ? '⊓ ' : '⊔ ') +
+                   groupSum(g, 'gemStd') +
+                   ' <span class="gg-n">(' + g.positions.length + 'w)</span>' +
+                   '<span class="gg-del" title="Remove group">×</span></span>';
+        }
+        var below = groups.filter(function (g) { return !g.above; }).sort(chipSort);
+        var above = groups.filter(function (g) { return  g.above; }).sort(chipSort);
+        box.innerHTML = below.map(chipHTML).join('') +
+            '<span class="gem-pipe" title="Chips right of this divider draw their bracket ABOVE the text"></span>' +
+            above.map(chipHTML).join('');
     }
 
     // drag-to-reorder: live DOM shuffle while dragging; on drop the chip
@@ -567,10 +650,21 @@
             ev.preventDefault();
             ev.dataTransfer.dropEffect = 'move';
             var over = ev.target.closest('.gem-group-row');
-            if (!over || over === dragged) return;
-            var r = over.getBoundingClientRect();
-            box.insertBefore(dragged,
-                ev.clientX < r.left + r.width / 2 ? over : over.nextSibling);
+            if (over && over !== dragged) {
+                var r = over.getBoundingClientRect();
+                box.insertBefore(dragged,
+                    ev.clientX < r.left + r.width / 2 ? over : over.nextSibling);
+                return;
+            }
+            if (!over) {
+                // empty space / the pipe itself: snap to whichever side of
+                // the divider the pointer is on
+                var pipe = box.querySelector('.gem-pipe');
+                if (!pipe) return;
+                var pr = pipe.getBoundingClientRect();
+                if (ev.clientX < (pr.left + pr.right) / 2) box.insertBefore(dragged, pipe);
+                else box.appendChild(dragged);
+            }
         });
         box.addEventListener('drop', function (ev) { ev.preventDefault(); });
         box.addEventListener('dragend', function () {
@@ -578,11 +672,19 @@
             dragged.classList.remove('dragging');
             dragged = null;
             draggingChip = false;
-            var idOrder = Array.prototype.map.call(
-                box.querySelectorAll('.gem-group-row'),
-                function (el) { return parseInt(el.dataset.gid, 10); });
+            // DOM order is the new priority order; side of the pipe divider
+            // decides above/below.
+            var order = [], above = false;
+            Array.prototype.forEach.call(box.children, function (el) {
+                if (el.classList.contains('gem-pipe')) { above = true; return; }
+                if (!el.classList.contains('gem-group-row')) return;
+                var g = byId(parseInt(el.dataset.gid, 10));
+                if (!g) return;
+                g.above = above;
+                order.push(g.id);
+            });
             groups.sort(function (a, b) {
-                return idOrder.indexOf(a.id) - idOrder.indexOf(b.id);
+                return order.indexOf(a.id) - order.indexOf(b.id);
             });
             save();
             scheduleRender();
@@ -595,7 +697,7 @@
             return;
         }
         var row = ev.target.closest('.gem-group-row');
-        if (row) flashGroup(parseInt(row.dataset.gid, 10));
+        if (row) toggleLit(parseInt(row.dataset.gid, 10));
     });
 
     // ---- refresh hooks -------------------------------------------------------
