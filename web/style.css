@@ -1034,6 +1034,12 @@ main.bible-main {
     -webkit-hyphens: auto;
     hyphens: auto;
 }
+/* the concealed gem: a quiet link to Prov 25:2 with words 1-3 bracketed */
+.bible-sidebar-tagline a {
+    color: inherit;
+    text-decoration: underline dotted;
+}
+.bible-sidebar-tagline a:hover { color: var(--accent); }
 .bible-sidebar-nav {
     display: flex;
     flex-direction: column;
@@ -1546,11 +1552,10 @@ main.bible-main {
 .letter.hl-1 { background: rgba(251, 191,  36, 0.5); }   /* amber  */
 .letter.hl-2 { background: rgba(239,  68,  68, 0.4); }   /* red    */
 .letter.hl-3 { background: rgba(  59, 130, 246, 0.4); }  /* blue   */
-/* Excluded from gematria — used on index.php (study mode) */
+/* Excluded from gematria — used on index.php (study mode):
+   off = light gray, on = normal text color */
 .letter.letter-off {
-    color: var(--muted, #9ca3af);
-    text-decoration: line-through;
-    text-decoration-color: rgba(0, 0, 0, 0.25);
+    color: #c3c9d2;
 }
 
 /* ── Word spacer controls (versecomparison.php, compare mode) ─────────── */

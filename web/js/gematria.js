@@ -125,12 +125,27 @@
         return types;
     }
 
-    function sumCells(t, cells) {
+    function sumCells(t, cells, includeOff) {
+        // includeOff=true for whole-verse totals: toggled-off letters are
+        // still part of the verse — exclusion only applies to word-level
+        // study views (word values, selections, group brackets).
         let total = 0;
         cells.forEach(cell => {
             const orig = cell.querySelector('.original');
             const isHeb = !!(orig && orig.classList.contains('heb'));
-            if (isHeb && orig) {
+            const letters = cell.querySelectorAll('.letter');
+            if (letters.length) {
+                let std = 0, ord = 0, red = 0;
+                letters.forEach(s => {
+                    if (!includeOff && s.classList.contains('letter-off')) return;
+                    std += parseInt(s.dataset.std || 0, 10);
+                    ord += parseInt(s.dataset.ord || 0, 10);
+                    red += parseInt(s.dataset.red || 0, 10);
+                });
+                if (t === 'std')      total += std;
+                else if (t === 'ord') total += ord;
+                else total += isHeb ? digitalRoot(std) : red;
+            } else if (isHeb && orig) {
                 total += hebCellValue(orig.textContent || '', t);
             } else {
                 total += parseInt(cell.dataset[dataAttrs[t]] || 0, 10);
@@ -199,7 +214,12 @@
         let wordCount = realCells.length;
         let letterCount = 0;
         realCells.forEach(c => {
-            const attr = c.dataset.letterCount;
+            // Whole-verse counts include toggled-off letters (original count
+            // preserved by letter-select.js); study views count active only.
+            const attr = (useAll && c.dataset.letterCountOrig !== undefined &&
+                          c.dataset.letterCountOrig !== '')
+                ? c.dataset.letterCountOrig
+                : c.dataset.letterCount;
             if (attr !== undefined && attr !== '') {
                 letterCount += parseInt(attr, 10) || 0;
             } else {
@@ -224,7 +244,7 @@
         rowsEl.appendChild(countsRow);
 
         for (const t of types) {
-            const val     = sumCells(t, cells);
+            const val     = sumCells(t, cells, useAll);
             const fStr    = t === 'std' ? formatFactorsLinked(val) : formatFactors(val);
             const isPrime = fStr === 'prime';
             const valStr  = t === 'std'

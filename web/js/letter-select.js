@@ -47,7 +47,11 @@
 
     // Hebrew: each base letter (U+05D0–U+05EA, incl. sofit forms) plus any
     // following nikud / cantillation marks (U+0591–U+05C7, U+FB1E).
+    // Parashah markers (\פ \ס, or standalone פ/ס tokens) carry no gematria
+    // and must not become letters — same cleaning as gematria.js.
     function splitHebrew(text) {
+        text = text.replace(/\\[פס]/g, '')
+                   .replace(/(?:(?<=\s)|^)[פס](?=\s|$)/gu, '');
         const units = [];
         let cur = '';
         for (const ch of text) {
@@ -95,12 +99,14 @@
         return units;
     }
 
-    // Strip diacritics from a displayed character to get the base for lookup.
+    // Base character for value lookup. Units are built base-letter-first
+    // (Hebrew niqqud/cantillation and Greek diacritics FOLLOW the base), so
+    // NFD-decompose and take the first code point. This must strip Hebrew
+    // marks (U+0591–U+05C7) too — a Latin-only combining-range strip leaves
+    // pointed letters unmatched and scores them 0.
     function baseChar(display) {
-        return display.normalize('NFD')
-            .replace(/[̀-ͯ]/g, '')
-            .normalize('NFC')
-            .toLowerCase();
+        const nfd = display.normalize('NFD');
+        return String.fromCodePoint(nfd.codePointAt(0)).toLowerCase();
     }
 
     function letterGem(base, lang) {
@@ -156,20 +162,32 @@
     }
 
     // Recompute word-cell gem data attributes from active (non-off) letters,
-    // then ask options.js to refresh the gematria display row.
-    function recomputeGem(cell) {
-        let std = 0, ord = 0, red = 0;
+    // then refresh every consumer (per-word numbers, selection totals,
+    // bracket labels). Pass silent=true during bulk passes and call
+    // refreshDisplays() once at the end.
+    function recomputeGem(cell, silent) {
+        let std = 0, ord = 0, red = 0, off = 0;
         cell.querySelectorAll('.letter').forEach(s => {
-            if (!s.classList.contains('letter-off')) {
-                std += parseInt(s.dataset.std || 0, 10);
-                ord += parseInt(s.dataset.ord || 0, 10);
-                red += parseInt(s.dataset.red || 0, 10);
-            }
+            if (s.classList.contains('letter-off')) { off++; return; }
+            std += parseInt(s.dataset.std || 0, 10);
+            ord += parseInt(s.dataset.ord || 0, 10);
+            red += parseInt(s.dataset.red || 0, 10);
         });
         cell.dataset.gemStd = std;
         cell.dataset.gemOrd = ord;
         cell.dataset.gemRed = red;
+        // Keep the Words·Letters counter honest: excluded letters don't count.
+        if (cell.dataset.letterCountOrig === undefined) {
+            cell.dataset.letterCountOrig = cell.dataset.letterCount || '';
+        }
+        const orig = parseInt(cell.dataset.letterCountOrig, 10);
+        if (!isNaN(orig)) cell.dataset.letterCount = Math.max(0, orig - off);
+        if (!silent) refreshDisplays();
+    }
+
+    function refreshDisplays() {
         if (typeof window._updateGematria === 'function') window._updateGematria();
+        if (typeof window._gemRebuild === 'function') window._gemRebuild();
     }
 
     // ── Mode and wrapper ──────────────────────────────────────────────────────
@@ -178,7 +196,26 @@
     const mode    = (wrapper && wrapper.dataset.letterMode) || 'study';
     const MAX_HL  = 3; // hl-1 = amber, hl-2 = red, hl-3 = blue
 
+    // Study mode shares the page with word-cell selection, so letter clicks
+    // only fire with a modifier: Alt+click, or click while holding L
+    // (same key-modifier convention as S/D paint selection).
+    let keyL = false;
+    if (mode !== 'compare') {
+        document.addEventListener('keydown', ev => {
+            if (ev.target && ev.target.closest &&
+                ev.target.closest('input, textarea, select, [contenteditable="true"]')) return;
+            if (ev.key === 'l' || ev.key === 'L') keyL = true;
+        });
+        document.addEventListener('keyup', ev => {
+            if (ev.key === 'l' || ev.key === 'L') keyL = false;
+        });
+        window.addEventListener('blur', () => { keyL = false; });
+    }
+
     // ── Click handler (event-delegated on wrapper) ────────────────────────────
+    // Registered in the CAPTURE phase: word-selection.js listens for clicks on
+    // the same element, and same-node bubble listeners run in registration
+    // order — capture guarantees we act (and stop propagation) first.
 
     if (wrapper) {
         wrapper.addEventListener('click', function (e) {
@@ -187,7 +224,10 @@
             const cell = e.target.closest('.word-cell');
             if (!cell) return;
 
-            // Stop here — do NOT let the click bubble to word-cell selection.
+            // Study mode without the modifier: bubble on to word selection.
+            if (mode !== 'compare' && !keyL && !e.altKey) return;
+
+            // Acting on the letter — do NOT trigger word-cell selection too.
             e.stopPropagation();
 
             if (mode === 'compare') {
@@ -203,7 +243,7 @@
 
             recomputeGem(cell);
             saveState();
-        });
+        }, true);
     }
 
     // ── Re-split after variant switch ─────────────────────────────────────────
@@ -326,7 +366,9 @@
                     applySpacerToCell(cell, parseInt(units, 10));
                 });
             }
-            document.querySelectorAll('#interlinear .word-cell').forEach(recomputeGem);
+            document.querySelectorAll('#interlinear .word-cell')
+                .forEach(cell => recomputeGem(cell, true));
+            refreshDisplays();
         } catch (_) {}
     }
 
@@ -336,9 +378,9 @@
     function init() {
         document.querySelectorAll('#interlinear .word-cell').forEach(cell => {
             processCell(cell);
-            recomputeGem(cell);
+            recomputeGem(cell, true);
         });
-        loadState();
+        loadState();   // applies lo= state, then refreshes all displays once
     }
 
     if (document.readyState === 'loading') {

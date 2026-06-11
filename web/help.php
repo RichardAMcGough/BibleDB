@@ -106,6 +106,7 @@ $_help_forum_url = htmlspecialchars(rtrim($_help_cfg['phpbb_url'] ?? '', '/'), E
     <li><strong>Prime coloring</strong>: any prime appearing in two or more group totals is colored consistently everywhere. Click a prime in a label to pin its color.</li>
     <li><strong>Custom labels</strong>: click a label to edit it (e.g. <em>ONE × GOD = 13 × 86</em>); ↺ restores the computed value.</li>
     <li><strong>Presentation highlight</strong>: click a group's chip to light up its words and label; click again to clear, or click another chip to move the spotlight.</li>
+    <li><strong>Letter toggling</strong>: <kbd>Alt</kbd>+click any letter to set it aside from its word's value (it dims to light gray) — e.g. drop a vav prefix to see the bare word's value. Whole-verse totals always keep every letter. Click again to restore.</li>
     <li>Everything persists in the page URL — copy the link and your whole arrangement travels with it.</li>
   </ul>
 
@@ -171,6 +172,18 @@ $_help_forum_url = htmlspecialchars(rtrim($_help_cfg['phpbb_url'] ?? '', '/'), E
     <li><strong>🔗 copy link</strong> — copy a deep link that restores this selection (and any groups) for anyone who opens it.</li>
     <li><strong>⊔ group</strong> — turn the selection into a labeled bracket group.</li>
   </ul>
+  <p>
+    <strong>Letter toggling:</strong> hold <kbd>Alt</kbd> (or <kbd>L</kbd>) and
+    click an individual letter to set it aside — it turns light gray and the
+    word's value, selections, and group brackets recompute without it.
+    Click again to restore. The whole-verse totals always keep every letter
+    (the toggle separates a letter from its <em>word</em> for study; it never
+    changes the verse itself). Perfect for dropping a vav prefix: in
+    Genesis 2:9, toggling the vav off וְעֵץ reveals <em>Tree of Life</em> =
+    233 and <em>Tree of the Knowledge of good and evil</em> = 932 = 4 × 233.
+    Toggled letters are stored in the page link, so 🔗 copy link preserves
+    them.
+  </p>
 
   <h3 id="word-groups">Word Groups (Brackets)</h3>
   <p>
@@ -250,6 +263,7 @@ $_help_forum_url = htmlspecialchars(rtrim($_help_cfg['phpbb_url'] ?? '', '/'), E
     <li><strong>Click word</strong> — toggle selection.</li>
     <li><strong>Left-drag</strong> (or hold <kbd>S</kbd> + move) — paint-select words.</li>
     <li><strong>Right-drag</strong> (or hold <kbd>D</kbd> + move) — paint-deselect words.</li>
+    <li><kbd>Alt</kbd>+click a letter (or hold <kbd>L</kbd> + click) — toggle the letter out of gematria (light gray = excluded).</li>
     <li><kbd>Esc</kbd> — clear the selection.</li>
     <li><strong>Click group label</strong> — edit the label text (<kbd>Enter</kbd> commits, <kbd>Esc</kbd> cancels).</li>
     <li><strong>Click prime in label</strong> — pin/unpin its theme color.</li>

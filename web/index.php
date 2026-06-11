@@ -674,6 +674,7 @@ const VERSE_REF  = <?= json_encode($range_ref_str) ?>;
 <script src="js/grammar-tooltip.js"></script>
 <script src="js/deep-link.js"></script>
 <script src="js/group-brackets.js"></script>
+<script src="js/letter-select.js"></script>
 <!-- BBCode toolbar (reuses phpBB editor.js for insertion/caret so it feels like posting on the forum).
      The globals must be declared before the editor script runs. -->
 <script>

@@ -9,7 +9,7 @@ function _bsActive(string $file): string {
 <aside id="bible-sidebar" class="bible-sidebar">
   <div class="bible-sidebar-inner">
     <p class="bible-sidebar-title">Bible Gems</p>
-    <p class="bible-sidebar-tagline" lang="en">&ldquo;It is the glory of God to conceal a thing: but the honour of kings is to search out a matter.&rdquo; &mdash;&nbsp;Proverbs&nbsp;25:2</p>
+    <p class="bible-sidebar-tagline" lang="en">&ldquo;It is the glory of God to conceal a thing: but the honour of kings is to search out a matter.&rdquo; &mdash;&nbsp;<a href="index.php?book=Pro&amp;chapter=25&amp;verse=2&amp;count=1&amp;edition=BHS&amp;groups=1-3&selected=1,2,3" title="Search out the matter&hellip;">Proverbs&nbsp;25:2</a></p>
     <nav class="bible-sidebar-nav">
       <div class="sidebar-inline-row">
         <a href="index.php"<?= _bsActive('index.php') ?>>Gem Finder</a>
