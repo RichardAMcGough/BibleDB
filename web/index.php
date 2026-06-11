@@ -230,7 +230,8 @@ $next = $lxx_mode
 <?php bible_render_layout_banner(); ?>
 <div class="bible-layout">
 <main class="bible-main">
-<p class="gem-subtitle">Interlinear Hebrew &amp; Greek with gematria discovery tools — new here? <a href="help.php">Start with the Help guide</a>.</p>
+<p class="gem-subtitle" id="gem-subtitle">Interlinear Hebrew &amp; Greek with gematria discovery tools — new here? <a href="help.php">Start with the Help guide</a>.<button type="button" class="gem-subtitle-dismiss" title="Dismiss" onclick="document.getElementById('gem-subtitle').style.display='none';try{localStorage.setItem('gem-subtitle-dismissed','1')}catch(e){}">&times;</button></p>
+<script>try{if(localStorage.getItem('gem-subtitle-dismissed')==='1'){document.getElementById('gem-subtitle').style.display='none';}}catch(e){}</script>
 <div class="selector">
 <?php
 ob_start(); ?>

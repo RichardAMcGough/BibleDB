@@ -1008,13 +1008,19 @@ main.bible-main {
     text-transform: uppercase;
     letter-spacing: 0.06em;
 }
-/* one-line orientation under the banner on the Gem Finder page */
+/* one-line orientation under the banner on the Gem Finder page (dismissable) */
 .gem-subtitle {
     margin: 0 0 10px;
     font-size: 12px;
     color: var(--muted);
 }
 .gem-subtitle a { color: var(--accent); }
+.gem-subtitle-dismiss {
+    background: none; border: none; cursor: pointer;
+    color: var(--muted); font-size: 14px; line-height: 1;
+    padding: 0 4px; margin-left: 6px; vertical-align: middle;
+}
+.gem-subtitle-dismiss:hover { color: var(--fg); }
 
 .bible-sidebar-tagline {
     margin: 0 0 12px;
