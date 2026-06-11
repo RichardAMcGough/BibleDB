@@ -122,11 +122,21 @@ def main():
         if cur.fetchone()[0] == 0:
             print("Adding variant.text_search column …")
             cur.execute("ALTER TABLE variant ADD COLUMN text_search VARCHAR(150) DEFAULT NULL")
-            cur.execute("CREATE INDEX idx_variant_text_search ON variant(text_search(50))")
             conn.commit()
-            print("Column + index created.")
+            print("Column created.")
         else:
             print("variant.text_search already exists — updating values.")
+        # Index checked separately so a previous partial run (e.g. INDEX
+        # privilege denied after the column was added) heals on re-run.
+        cur.execute("""
+            SELECT COUNT(*) FROM information_schema.STATISTICS
+            WHERE TABLE_SCHEMA = %s AND TABLE_NAME = 'variant'
+              AND INDEX_NAME = 'idx_variant_text_search'
+        """, (cfg["database"],))
+        if cur.fetchone()[0] == 0:
+            print("Adding idx_variant_text_search …")
+            cur.execute("CREATE INDEX idx_variant_text_search ON variant(text_search(50))")
+            conn.commit()
 
         cur.execute("""
             SELECT v.id, w.language, v.text_original
