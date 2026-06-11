@@ -391,3 +391,27 @@ sync-web-to-public.ps1.
   helpers.php fallbacks now point there; gitignore guards prevent re-adding).
   The third copy at `Bible Wheel Site/include/include` is now referenced by
   nothing — archive or delete at leisure.
+
+### Session 3 (2026-06-10) — brackets above/below, Bible Gems branding
+
+Commits `ef13f7b`, `f7cf6d1` (plus `bf81b1d`/`d0d517a` follow-ups earlier).
+All deployed to localhost AND uploaded to the live site (verified working).
+
+- **Brackets above/below the text**: each group has an `above` flag
+  (persisted as `^` prefix in `?groups=`). Chips sit either side of a
+  vertical pipe divider in the gematria bar — drag across it to flip.
+  Above-side renders fully inverted; independent collision stacks per side.
+- **Collision model**: a group occupies fragments + connector bars; any
+  horizontal overlap bumps. Chip glyphs: ⊔ below / ⊓ above.
+- **Presentation highlight**: chip click toggles a persistent amber light
+  on the group's words + label (one at a time, survives re-renders).
+- **Bible Gems branding**: tool renamed from Bible DB/Browser/Explorer.
+  Sidebar = brand + Prov 25:2 tagline (justified, hyphens, lang="en");
+  index nav link = "Gem Finder"; dismissable orientation subtitle on
+  index.php (localStorage `gem-subtitle-dismissed`); help.php fully
+  rewritten (Quick Start, word-groups guide, mouse/keyboard reference).
+- **Live-site note**: the site menu label lives in
+  `public_html/include/menu/main_menu.inc` ("Bible Gems" + tooltip) —
+  that file deploys to the live `/include/menu/` separately from the
+  bible app folder. Live style.css must be re-uploaded whenever web/
+  changes ship (a stale copy caused unstyled tagline on live).
