@@ -61,11 +61,15 @@ def load_config(path: Optional[Union[str, Path]] = None) -> Dict[str, Any]:
     """
     # NOTE: no credentials are hardcoded here (this file is public).
     # Real values come from config.ini [mariadb] and/or BIBLE_DB_* env vars.
+    # "socket" (BIBLE_DB_SOCKET / [mariadb] socket) selects a unix-socket
+    # connection for hosts whose MySQL has no TCP listener (some cPanel
+    # setups — PHP's "localhost" implies the socket; pymysql's does not).
     cfg: Dict[str, Any] = {
         "host":     "127.0.0.1",
         "port":     "3306",
         "user":     "root",
         "password": "",
+        "socket":   "",
         "database": None,
     }
 
@@ -91,12 +95,12 @@ def load_config(path: Optional[Union[str, Path]] = None) -> Dict[str, Any]:
             cp.read(p, encoding="utf-8")
             if "mariadb" in cp:
                 sec = cp["mariadb"]
-                for key in ("host", "port", "user", "password"):
+                for key in ("host", "port", "user", "password", "socket"):
                     if key in sec and sec[key].strip():
                         cfg[key] = sec[key].strip()
 
     # Environment variables override config.ini for host/port/user/password
-    for key in ("host", "port", "user", "password"):
+    for key in ("host", "port", "user", "password", "socket"):
         env_val = os.environ.get(f"BIBLE_DB_{key.upper()}")
         if env_val and env_val.strip():
             cfg[key] = env_val.strip()
@@ -142,18 +146,27 @@ def get_connection(cfg: Dict[str, Any]) -> Tuple[Any, str]:
         user=cfg["user"], password=cfg["password"],
         database=cfg["database"],
     )
-    try:
-        import mariadb  # type: ignore
-        return mariadb.connect(**common), "mariadb"
-    except Exception:
-        pass
+    socket = (cfg.get("socket") or "").strip()
+    if not socket:
+        try:
+            import mariadb  # type: ignore
+            return mariadb.connect(**common), "mariadb"
+        except Exception:
+            pass
     try:
         import pymysql  # type: ignore
+        if socket:
+            # unix-socket connection (host/port ignored by the server side)
+            return pymysql.connect(charset="utf8mb4", unix_socket=socket,
+                                   user=cfg["user"], password=cfg["password"],
+                                   database=cfg["database"]), "pymysql (socket)"
         return pymysql.connect(charset="utf8mb4", **common), "pymysql"
     except Exception as e:
         print("ERROR: Could not connect using either 'mariadb' or 'pymysql'.")
         print("Install one with: pip install mariadb   # preferred")
         print("                  pip install pymysql   # fallback")
+        print("For socket-only MySQL (some cPanel hosts), set BIBLE_DB_SOCKET")
+        print("to the server socket path, e.g. /var/lib/mysql/mysql.sock")
         print(f"Last error: {e}")
         sys.exit(2)
 
