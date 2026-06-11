@@ -415,3 +415,44 @@ All deployed to localhost AND uploaded to the live site (verified working).
   that file deploys to the live `/include/menu/` separately from the
   bible app folder. Live style.css must be re-uploaded whenever web/
   changes ship (a stale copy caused unstyled tagline on live).
+
+### Session 4 (2026-06-10 evening) — letter toggling (commit 406b9ab)
+
+- **Letter toggling live on the Gem Finder**: Alt+click (or hold L) a
+  letter → dims light gray, excluded from word value / selection sums /
+  bracket labels / letter count. Whole-verse totals ALWAYS include every
+  letter (the toggle separates a letter from its word for study; it never
+  changes the verse). Persists as `lo=WORDID-LETIDX|...` in the URL.
+  Implementation: letter-select.js study mode activated on index.php
+  (capture-phase click so word-selection.js doesn't fire first), parashah
+  markers skipped in splitHebrew, baseChar fixed for pointed Hebrew,
+  gematria.js sums letter spans with an includeOff flag for verse totals.
+  Showcase: Gen 2:9 minus the two vav prefixes → Tree of Life = 233,
+  Tree of Knowledge of good and evil = 932 = 4 × 233. Works in Greek too
+  (iota subscript = its own ι = 10 letter).
+- Sidebar tagline "Proverbs 25:2" is now a quiet dotted link to that verse
+  with words 1–3 bracketed: 777 = 3 × 7 × 37 (the concealed gem).
+
+### PARKED — mobile letter-toggle popover (plan agreed, not built)
+
+Letters are far below the 44px touch-target minimum, so mobile letter
+toggling needs a magnified popover, not direct taps:
+
+- **Long-press a word cell** (~500ms, pointer events; context-menu and
+  user-select are already suppressed) → popover anchored to the cell.
+- Popover shows the word at 3–4× size, letters spaced as fat tap targets;
+  **tap a letter to toggle** — grays in popover and verse simultaneously,
+  all values update live.
+- Each letter gets a small value chip beneath it (ב = 2, ר = 200 …) and
+  the word's running total recomputes at the bottom — a teaching view,
+  worth exposing on desktop too (right-click or modifier).
+- Dismiss = tap outside. State rides the existing lo= machinery; the
+  popover is just a magnified input surface.
+- **Gesture budget decision**: long-press belongs to the letter popover,
+  NOT paint-select (design doc phase 3 originally reserved it for paint).
+  Word selection stays plain taps; if mobile paint-select is ever needed,
+  use an explicit select-mode toggle button instead.
+- Build is self-contained in letter-select.js + CSS.
+
+Also parked: bracket phase 2 (keep-group-on-one-line, label collision
+polish between different groups) and phase 3 mobile for groups.

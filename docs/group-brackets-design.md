@@ -36,6 +36,10 @@ vertical depth encodes nesting, overlaps never cross lines.
 - **Phase 2 (deferred)**: optional keep-together pass — force a line break
   before a group that would fit unwrapped on one line. Needs iterate-to-stable
   reflow; nothing in phase 1 blocks it.
+- **Gesture budget (decided 2026-06-10)**: on mobile, long-press is assigned
+  to the letter-toggle zoom popover (see HANDOFF-current "PARKED" section),
+  not paint-select. Word selection stays plain taps; mobile paint-select, if
+  ever needed, gets an explicit select-mode toggle button.
 - Vertical space: flex-wrap lines aren't DOM nodes, so per-line padding is
   impossible; instead `#interlinear`'s row-gap (and padding-bottom for the last
   line) is set to fit the deepest bracket stack on any line. Uniform but stable.
